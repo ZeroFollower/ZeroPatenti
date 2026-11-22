@@ -30,7 +30,7 @@ serde_json = "1"
 sha2 = "0.10"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
-slint = { version = "1.19.0", optional = true, default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-software"] }
+slint = { version = "1.19.0", optional = true, default-features = false, features = ["std", "compat-1-2", "backend-winit", "unstable-winit-030", "renderer-software"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = { version = "0.21", optional = true }

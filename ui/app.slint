@@ -59,6 +59,10 @@ export component AppWindow inherits Window {
     pure callback matches-topic(string,string) -> bool;
     callback open-entry(string,string);
     VerticalLayout {
+        padding-top: root.safe-area-insets.top;
+        padding-bottom: root.safe-area-insets.bottom;
+        padding-left: root.safe-area-insets.left;
+        padding-right: root.safe-area-insets.right;
         spacing: 0;
         Rectangle {
             height: 54px; background: #124d52;
