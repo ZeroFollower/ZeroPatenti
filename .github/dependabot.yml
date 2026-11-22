@@ -1,0 +1,15 @@
+# Gli aggiornamenti sono proposti come PR, non uniti automaticamente.
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      timezone: "Europe/Rome"
+    open-pull-requests-limit: 10
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      timezone: "Europe/Rome"
+    open-pull-requests-limit: 5
