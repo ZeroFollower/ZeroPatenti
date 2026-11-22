@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail, ensure};
 use chrono::{TimeZone, Utc};
 use clap::{Parser, Subcommand};
 use fsrs::{FSRS, MemoryState};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value};
 use serde::Deserialize;
 
 mod catalog;
@@ -44,6 +44,28 @@ enum Command {
         license: String,
         #[arg(long, default_value = "conseguimento")]
         procedure: String,
+        #[arg(long = "topic-id", value_delimiter = ',', num_args = 1..)]
+        topics: Vec<i64>,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long, default_value_t = 0.90)]
+        retention: f32,
+    },
+    /// Elenca gli argomenti del listato per la patente scelta.
+    TopicsForLicense {
+        #[arg(long)]
+        license: String,
+        #[arg(long, default_value = "conseguimento")]
+        procedure: String,
+    },
+    /// Ripassa esclusivamente domande già studiate e scadute.
+    ReviewForLicense {
+        #[arg(long)]
+        license: String,
+        #[arg(long, default_value = "conseguimento")]
+        procedure: String,
+        #[arg(long = "topic-id", value_delimiter = ',', num_args = 1..)]
+        topics: Vec<i64>,
         #[arg(long, default_value_t = 20)]
         limit: usize,
         #[arg(long, default_value_t = 0.90)]
@@ -68,10 +90,28 @@ enum Command {
         #[arg(long)]
         version: String,
     },
+    /// Elenca gli argomenti disponibili di una banca dati.
+    Topics {
+        #[arg(long)]
+        version: String,
+    },
+    /// Ripassa solo le domande già studiate e scadute del set.
+    Review {
+        #[arg(long)]
+        version: String,
+        #[arg(long = "topic-id", value_delimiter = ',', num_args = 1..)]
+        topics: Vec<i64>,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long, default_value_t = 0.90)]
+        retention: f32,
+    },
     /// Ripassa domande scadute, poi domande nuove.
     Study {
         #[arg(long)]
         version: String,
+        #[arg(long = "topic-id", value_delimiter = ',', num_args = 1..)]
+        topics: Vec<i64>,
         #[arg(long, default_value_t = 20)]
         limit: usize,
         #[arg(long, default_value_t = 0.90)]
@@ -156,10 +196,19 @@ fn main() -> Result<()> {
             println!("Patente {} ({}) -> banca dati {}", license, procedure, version);
             import_questions(&mut conn, &version, questions)?;
         }
-        Command::StudyForLicense { license, procedure, limit, retention } => {
+        Command::StudyForLicense { license, procedure, topics, limit, retention } => {
             let version = catalog::version_for(&license, &procedure)?;
             ensure_imported(&conn, &version)?;
-            study(&mut conn, &version, limit, retention)?;
+            study(&mut conn, &version, limit, retention, &topics, false)?;
+        }
+        Command::TopicsForLicense { license, procedure } => {
+            let version = catalog::version_for(&license, &procedure)?;
+            topics(&conn, &version)?;
+        }
+        Command::ReviewForLicense { license, procedure, topics, limit, retention } => {
+            let version = catalog::version_for(&license, &procedure)?;
+            ensure_imported(&conn, &version)?;
+            study(&mut conn, &version, limit, retention, &topics, true)?;
         }
         Command::StatsForLicense { license, procedure } => {
             let version = catalog::version_for(&license, &procedure)?;
@@ -189,7 +238,11 @@ fn main() -> Result<()> {
             }
             import_questions(&mut conn, &version, questions)?;
         }
-        Command::Study { version, limit, retention } => study(&mut conn, &version, limit, retention)?,
+        Command::Study { version, topics, limit, retention } =>
+            study(&mut conn, &version, limit, retention, &topics, false)?,
+        Command::Review { version, topics, limit, retention } =>
+            study(&mut conn, &version, limit, retention, &topics, true)?,
+        Command::Topics { version } => topics(&conn, &version)?,
         Command::Stats { version } => stats(&conn, &version)?,
         Command::ExportAnki {
             version,
@@ -345,33 +398,89 @@ fn import_questions(conn: &mut Connection, version: &str, questions: Vec<SourceQ
     Ok(())
 }
 
-fn due_cards(conn: &Connection, version: &str, limit: usize) -> Result<Vec<StudyCard>> {
-    let now = Utc::now().timestamp();
+/// Elenca gli argomenti del listato corrente, con conteggi verificabili.
+fn topics(conn: &Connection, version: &str) -> Result<()> {
     let mut stmt = conn.prepare(
-        "SELECT q.card_id, q.topic, q.question_text, q.correct_answer, q.image_path,
-                s.last_review_at, s.stability, s.stability_fast, s.difficulty
-         FROM questions q
-         LEFT JOIN card_state s ON s.card_id=q.card_id
-         WHERE q.source_version=?1 AND (s.card_id IS NULL OR s.due_at<=?2)
-         ORDER BY CASE WHEN s.card_id IS NOT NULL THEN 0 ELSE 1 END,
-                  CASE WHEN s.card_id IS NOT NULL THEN s.due_at END ASC,
-                  RANDOM()
-         LIMIT ?3",
+        "SELECT q.topic_id, q.topic, COUNT(*) AS total,
+                SUM(CASE WHEN s.card_id IS NOT NULL THEN 1 ELSE 0 END) AS studied,
+                SUM(CASE WHEN s.card_id IS NOT NULL AND s.due_at<=?2 THEN 1 ELSE 0 END) AS due
+         FROM questions q LEFT JOIN card_state s ON s.card_id=q.card_id
+         WHERE q.source_version=?1
+         GROUP BY q.topic_id,q.topic ORDER BY q.topic_id"
     )?;
-    let mapped = stmt.query_map(params![version, now, limit as i64], |r| {
+    let rows=stmt.query_map(params![version,Utc::now().timestamp()],|r|{
+        Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?,
+            r.get::<_,i64>(3)?,r.get::<_,i64>(4)?))
+    })?;
+    let mut count=0;
+    for row in rows {
+        let (id,name,total,studied,due)=row?;
+        println!("{id:>2} | {name} | totali {total} | studiate {studied} | da ripassare {due}");
+        count+=1;
+    }
+    ensure!(count>0,"Nessun argomento importato per il listato {version}");
+    Ok(())
+}
+
+/// Convalida gli ID delle materie per evitare selezioni vuote dovute a errori
+/// e controlla la versione: gli ID non sono globali tra edizioni diverse.
+fn validate_topics(conn: &Connection, version: &str, selected: &[i64]) -> Result<Vec<i64>> {
+    let mut ids=selected.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    for id in &ids {
+        let exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM questions WHERE source_version=?1 AND topic_id=?2",
+            params![version,id],|r|r.get(0))?;
+        ensure!(exists>0,"Argomento ID {id} inesistente nel listato {version}. Usa il comando topics.");
+    }
+    Ok(ids)
+}
+
+/// Solo domande scadute o nuove in Studio, SOLO scadute già viste in Ripasso.
+/// Filtro applicato in SQL prima della selezione: non vengono mai pescate
+/// domande di altri argomenti.
+fn due_cards(conn: &Connection, version: &str, limit: usize, selected: &[i64], only_reviews: bool)
+    -> Result<Vec<StudyCard>> {
+    let ids=validate_topics(conn,version,selected)?;
+    let now=Utc::now().timestamp();
+    let mut query=String::from(
+        "SELECT q.card_id,q.topic,q.question_text,q.correct_answer,q.image_path,
+                s.last_review_at,s.stability,s.stability_fast,s.difficulty
+         FROM questions q LEFT JOIN card_state s ON s.card_id=q.card_id
+         WHERE q.source_version=?1 AND ");
+    if only_reviews {
+        query.push_str("s.card_id IS NOT NULL AND s.due_at<=?2 ");
+    } else {
+        query.push_str("(s.card_id IS NULL OR s.due_at<=?2) ");
+    }
+    let mut args=vec![Value::Text(version.to_string()),Value::Integer(now)];
+    if !ids.is_empty() {
+        let placeholders=(0..ids.len()).map(|i|format!("?{}",i+3)).collect::<Vec<_>>().join(",");
+        query.push_str(&format!(" AND q.topic_id IN ({placeholders}) "));
+        args.extend(ids.into_iter().map(Value::Integer));
+    }
+    query.push_str(
+        " ORDER BY CASE WHEN s.card_id IS NOT NULL THEN 0 ELSE 1 END,
+          CASE WHEN s.card_id IS NOT NULL THEN s.due_at END ASC,
+          RANDOM()");
+    // LIMIT inline is safe here because usize is parsed and bounded separately.
+    query.push_str(&format!(" LIMIT {}",limit));
+    let mut stmt=conn.prepare(&query)?;
+    let mapped=stmt.query_map(params_from_iter(args),|r|{
         Ok(StudyCard {
-            id: r.get(0)?,
-            topic: r.get(1)?,
-            text: r.get(2)?,
-            correct: r.get::<_, i64>(3)? != 0,
-            figure: r.get(4)?,
-            last_review_at: r.get(5)?,
-            stability: r.get(6)?,
-            stability_fast: r.get(7)?,
-            difficulty: r.get(8)?,
+            id:r.get(0)?,
+            topic:r.get(1)?,
+            text:r.get(2)?,
+            correct:r.get::<_,i64>(3)?!=0,
+            figure:r.get(4)?,
+            last_review_at:r.get(5)?,
+            stability:r.get(6)?,
+            stability_fast:r.get(7)?,
+            difficulty:r.get(8)?,
         })
     })?;
-    Ok(mapped.collect::<std::result::Result<Vec<_>, _>>()?)
+    Ok(mapped.collect::<std::result::Result<Vec<_>,_>>()?)
 }
 
 fn prompt(message: &str) -> Result<String> {
@@ -382,12 +491,12 @@ fn prompt(message: &str) -> Result<String> {
     Ok(input.trim().to_lowercase())
 }
 
-fn study(conn: &mut Connection, version: &str, limit: usize, retention: f32) -> Result<()> {
+fn study(conn: &mut Connection, version: &str, limit: usize, retention: f32, selected_topics: &[i64], only_reviews: bool) -> Result<()> {
     ensure!(limit > 0 && limit <= 200, "Il limite deve essere tra 1 e 200");
     ensure!(retention.is_finite() && (0.70..=0.99).contains(&retention), "Retention tra 0.70 e 0.99");
-    let cards = due_cards(conn, version, limit)?;
+    let cards = due_cards(conn, version, limit, selected_topics, only_reviews)?;
     if cards.is_empty() {
-        println!("Nessuna domanda scaduta o nuova per {version}.");
+        println!("Nessuna domanda disponibile per il filtro scelto nel listato {version}.");
         return Ok(());
     }
     let fsrs = FSRS::default(); // fsrs 7.0.0 => parametri FSRS-7 (34).
