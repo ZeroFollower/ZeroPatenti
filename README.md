@@ -4,14 +4,14 @@
 
 ## Stato del progetto
 
-**v0.1 / base tecnica** — il repository contiene un **motore CLI Rust** per importazione di domande, studio con ripasso dilazionato, salvataggio SQLite e export Anki. La **GUI Slint desktop/Android è pianificata, ma non ancora implementata**. Il mockup non è uno screenshot del software funzionante.
+La CLI Rust e la GUI Slint per desktop e Android condividono la banca dati SQLite. Dalla GUI puoi studiare, ripassare, svolgere una prova e consultare la correzione e le statistiche. Nelle prove personalizzate puoi scegliere gli argomenti, il numero di domande, il criterio di estrazione e il timer.
 
 ## Scelte tecnologiche
 
 - **Rust 2024**: applicazione e motore condiviso
 - **`fsrs` 7.0.0**: scheduling dei ripassi, invisibile nell'interfaccia utente
 - **SQLite (`rusqlite`)**: domande, stati e storico dei ripassi
-- **Slint**: toolkit UI previsto per Windows, Linux e Android
+- **Slint**: interfaccia per Windows, Linux e Android
 - **CSV/JSON + TSV**: import banca dati ed export Anki
 
 ## Esperienza di studio decisa
@@ -47,10 +47,28 @@ cargo run -- stats-for-license --license B
 cargo run -- study-for-license --license AM --procedure revisione
 ```
 
-L'importazione automatica da PDF ministeriale e l'aggiornamento remoto dei
-listati **non sono ancora implementati**: i comandi accettano JSON/CSV
-normalizzati da verificare rispetto alla fonte ufficiale, inclusi immagini e
-soluzioni. Nessuna banca dati completa è attualmente inclusa nel repository.
+Per preparare una banca per le simulazioni, scarica il PDF italiano dal campo
+`fonte` del listato scelto nel catalogo e usa una cartella distinta per ogni edizione.
+Il normalizzatore controlla il digest del PDF ed estrae domande, soluzioni e figure.
+Il motore ricontrolla il contenuto importato prima di iniziare una prova.
+
+```bash
+python -m pip install PyMuPDF
+python scripts/normalize_bank.py listato.pdf banca
+cargo run --features gui --bin zeropatenti-gui
+```
+
+In **Banca dati e immagini** importa `banca/questions.json` e usa `banca` come cartella delle immagini. Mantienila disponibile per vedere le figure offline. Puoi scegliere un database desktop con `--db percorso.sqlite3`; il predefinito è lo stesso della CLI.
+
+Su Android usa **Scegli la cartella del listato** per selezionare la cartella contenente `questions.json` e `figures/`, poi premi **Importa**. L'app conserva una copia privata. Per generare l'APK di sviluppo usa JDK 21, SDK Android 35 e NDK r30. Imposta `JAVA_HOME`, `ANDROID_HOME` e `ANDROID_NDK_ROOT` sulle rispettive cartelle:
+
+```bash
+rustup target add aarch64-linux-android
+cargo install cargo-apk2 --version 1.5.0 --locked
+cargo apk2 build --lib --features gui --target aarch64-linux-android
+```
+
+Con **Interrompi e salva** puoi riprendere dallo stesso quesito. Le omesse contano come errori per l'esito. Alla consegna di una personalizzata, ogni risposta data aggiorna una sola volta il ripasso. Riapri i risultati da **Statistiche e risultati**, dove le prove ufficiali e ciascuna strategia personalizzata hanno serie distinte.
 
 ## Versioni aggiornate e controlli
 
@@ -65,7 +83,7 @@ Vedi [Politica aggiornamenti](docs/POLITICA_AGGIORNAMENTI.md).
 ## Requisiti
 
 - Rust stable aggiornato, toolchain Cargo con edizione 2024.
-- Attualmente è disponibile la CLI; la GUI Slint e il pacchetto Android saranno aggiunti in una fase successiva.
+- Per compilare la GUI abilita la feature Cargo `gui`. Per eseguire anche i test dell'interfaccia usa `cargo test --features gui`.
 
 ## Prova locale (CLI)
 
@@ -122,4 +140,3 @@ Il JSON A/B contiene 7.020 affermazioni con campi `id`, `quesito_id`, `argomento
 
 Il repository non contiene attualmente una licenza per il codice: sceglierla **prima di qualsiasi distribuzione pubblica**. Per l'integrazione di Slint verificare le condizioni della licenza applicabile; per i quiz ministeriali, le immagini e gli archivi di terzi verificare separatamente le condizioni di riutilizzo.
 
-> Stato verifiche: codice analizzato, ma compilazione/test Rust non eseguiti in questo ambiente (toolchain Rust non disponibile).

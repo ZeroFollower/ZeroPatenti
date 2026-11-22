@@ -1,0 +1,204 @@
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export struct TopicItem { label: string, chosen: bool }
+export struct Entry { label: string, key: string }
+component Heading inherits Text {
+    color: #123c44; font-weight: 750; font-size: 25px; wrap: word-wrap;
+}
+component Body inherits Text {
+    color: #29474c; font-size: 16px; wrap: word-wrap;
+}
+component Panel inherits Rectangle {
+    background: #ffffff; border-radius: 12px; border-width: 1px; border-color: #ccdbd8;
+    VerticalLayout { padding: 14px; spacing: 10px; @children }
+}
+export component AppWindow inherits Window {
+    title: "ZeroPatenti";
+    preferred-width: 760px; preferred-height: 760px;
+    background: #f2f6f4;
+    in-out property <string> page: "home";
+    in-out property <string> notice;
+    in-out property <string> license: "B";
+    in-out property <string> procedure: "conseguimento";
+    in-out property <string> mode: "Personalizzata";
+    in-out property <string> strategy: "Equilibrata";
+    in-out property <string> bank;
+    in-out property <string> rule-note;
+    in-out property <int> count: 10;
+    in-out property <bool> timed: true;
+    in-out property <[TopicItem]> topics;
+    in-out property <bool> show-topics;
+    in-out property <string> search;
+    in-out property <int> selected-count;
+    in-out property <[Entry]> sessions;
+    in-out property <[Entry]> history;
+    in-out property <string> title-text;
+    in-out property <string> subtitle;
+    in-out property <string> prompt;
+    in-out property <image> figure;
+    in-out property <bool> has-figure;
+    in-out property <string> clock-text;
+    in-out property <string> answer;
+    in-out property <[string]> grid;
+    in-out property <int> position;
+    in-out property <bool> confirm-cancel;
+    in-out property <string> study-stage;
+    in-out property <bool> errors-only;
+    in-out property <string> details;
+    in-out property <string> import-path;
+    in-out property <bool> folder-picker;
+    in-out property <string> asset-root;
+    in-out property <string> since;
+    in-out property <string> until;
+    in-out property <string> stats-series: "Tutte";
+    in-out property <string> stats-topic: "Tutti";
+    in-out property <[string]> stats-topics;
+    callback act(string);
+    callback jump(int);
+    callback topic-toggle(int);
+    pure callback matches-topic(string,string) -> bool;
+    callback open-entry(string,string);
+    VerticalLayout {
+        spacing: 0;
+        Rectangle {
+            height: 54px; background: #124d52;
+            HorizontalLayout {
+                padding-left: 18px; padding-right: 14px; spacing: 8px;
+                Text { text: "ZeroPatenti"; color: white; font-size: 23px; font-weight: 800; vertical-alignment: center; }
+                if root.page != "home" && root.page != "exam": Button { text: "Inizio"; clicked => { root.act("home"); } }
+            }
+        }
+        if root.notice != "": Rectangle {
+            background: #fff0d1; min-height: note.preferred-height + 16px;
+            note := Text { x: 14px; width: parent.width - 28px; text: root.notice; wrap: word-wrap; vertical-alignment: center; color: #563f17; }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start; padding: 14px; spacing: 14px;
+                if root.page == "home": VerticalLayout {
+                    spacing: 12px;
+                    Heading { text: "La tua preparazione"; }
+                    Panel {
+                        HorizontalLayout {
+                            spacing: 8px;
+                            ComboBox { accessible-label: "Patente"; model: ["AM","A1","A2","A","B1","B","BE"]; current-value <=> root.license; selected(v) => {root.act("bank");} }
+                            ComboBox { accessible-label: "Procedura"; model: ["conseguimento","revisione"]; current-value <=> root.procedure; selected(v) => {root.act("bank");} }
+                        }
+                        Body { text: root.bank; }
+                        Button { text: "Banca dati e immagini"; clicked => { root.act("import"); } }
+                    }
+                    Panel {
+                        Body { text: "Modalità"; font-weight: 700; }
+                        ComboBox { model: ["Personalizzata","Ufficiale","Studio","Ripasso"]; current-value <=> root.mode; selected(v) => {root.act("config");} }
+                        if root.mode != "Ufficiale": VerticalLayout {
+                            spacing: 5px;
+                            Button { text: "Argomenti · " + root.selected-count + " di " + root.topics.length; clicked => { root.show-topics = !root.show-topics; } }
+                            if root.show-topics: VerticalLayout {
+                                spacing: 6px;
+                                LineEdit { text <=> root.search; placeholder-text: "Cerca un argomento"; }
+                                HorizontalLayout {
+                                    Button { text: "Tutti"; clicked => {root.act("select-all");} }
+                                    Button { text: "Nessuno"; clicked => {root.act("select-none");} }
+                                }
+                                for t[i] in root.topics: CheckBox {
+                                    visible: root.matches-topic(t.label, root.search);
+                                    text: t.label; checked: t.chosen; toggled => {root.topic-toggle(i);}
+                                }
+                            }
+                            Body { text: "Numero di domande"; }
+                            SpinBox { minimum: 1; maximum: 9999; value <=> root.count; edited(v) => {root.act("config");} }
+                        }
+                        if root.mode == "Personalizzata": VerticalLayout {
+                            spacing: 8px;
+                            ComboBox { accessible-label: "Estrazione"; model: ["Equilibrata","Casuale","Intelligente"]; current-value <=> root.strategy; }
+                            CheckBox { text: "Usa il tempo ufficiale"; checked <=> root.timed; }
+                        }
+                        if root.mode == "Personalizzata" || root.mode == "Ufficiale": Body { text: root.rule-note; }
+                        Button { text: "Inizia"; primary: true; enabled: root.topics.length > 0 && (root.mode == "Ufficiale" || root.selected-count > 0); clicked => {root.act("start");} }
+                    }
+                    for s in root.sessions: Button { text: s.label; clicked => {root.open-entry("paused",s.key);} }
+                    Button { text: "Statistiche e risultati"; clicked => {root.act("stats");} }
+                }
+                if root.page == "import": Panel {
+                    Heading { text: "Banca dati"; }
+                    Body { text: root.bank; }
+                    if root.folder-picker: Button { text: "Scegli la cartella del listato"; clicked => {root.act("pick-bank");} }
+                    Body { text: "File locale dei quesiti (CSV o JSON)"; }
+                    LineEdit { text <=> root.import-path; placeholder-text: "Percorso del file"; }
+                    Body { text: "Cartella delle immagini"; }
+                    LineEdit { text <=> root.asset-root; placeholder-text: "Cartella di origine"; }
+                    Button { text: "Importa"; primary: true; clicked => {root.act("import-file");} }
+                    Button { text: "Salva cartella immagini"; clicked => {root.act("save-media");} }
+                }
+                if root.page == "exam" || root.page == "study": Panel {
+                    Body { text: root.subtitle; }
+                    Heading { text: root.title-text; }
+                    if root.page == "exam": Body { text: root.clock-text; }
+                    if root.has-figure: Image { height: 145px; source: root.figure; image-fit: contain; accessible-label: "Figura del quesito"; }
+                    Body { text: root.prompt; font-size: 21px; }
+                    if root.page == "exam" || root.study-stage == "answer": HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "Vero"; primary: root.answer == "Vero"; clicked => {root.act("true");} }
+                        Button { text: "Falso"; primary: root.answer == "Falso"; clicked => {root.act("false");} }
+                    }
+                    if root.page == "study" && root.study-stage != "answer": Body { text: root.details; }
+                    if root.page == "study" && root.study-stage == "rate": VerticalLayout {
+                        for label[i] in ["Da ripassare","Difficile","Normale","Facile"]: Button { text: label; clicked => {root.jump(i + 1);} }
+                    }
+                    if root.page == "study" && root.study-stage == "next": Button { text: "Continua"; clicked => {root.act("next");} }
+                    if root.page == "exam": VerticalLayout {
+                        spacing: 8px;
+                        Button { text: "Cancella risposta"; enabled: root.answer != ""; clicked => {root.act("clear");} }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Button { text: "Precedente"; enabled: root.position > 0; clicked => {root.jump(root.position - 1);} }
+                            Button { text: "Successiva"; enabled: root.position + 1 < root.grid.length; clicked => {root.jump(root.position + 1);} }
+                        }
+                        Rectangle {
+                            height: ceil(root.grid.length / 5) * 42px;
+                            for n[i] in root.grid: Button {
+                                x: mod(i, 5) * parent.width / 5; y: floor(i / 5) * 42px;
+                                width: parent.width / 5 - 2px; height: 40px; text: n;
+                                primary: i == root.position; clicked => {root.jump(i);}
+                            }
+                        }
+                        Button { text: "Consegna"; primary: true; clicked => {root.act("submit");} }
+                        Button { text: "Interrompi e salva"; clicked => {root.act("pause");} }
+                    }
+                }
+                if root.page == "paused": Panel {
+                    Heading { text: "Prova sospesa"; }
+                    Body { text: root.subtitle; }
+                    Body { text: root.clock-text; }
+                    Button { text: "Riprendi"; primary: true; clicked => {root.act("resume");} }
+                }
+                if root.page == "exam" || root.page == "paused": Panel {
+                    if !root.confirm-cancel: Button { text: "Annulla prova"; clicked => {root.confirm-cancel = true;} }
+                    if root.confirm-cancel: VerticalLayout {
+                        Body { text: "Annullare questa prova? Non potrai riprenderla."; }
+                        Button { text: "Mantieni prova"; clicked => {root.confirm-cancel = false;} }
+                        Button { text: "Conferma annullamento"; clicked => {root.act("cancel");} }
+                    }
+                }
+                if root.page == "result": Panel {
+                    Heading { text: root.title-text; }
+                    Body { text: root.subtitle; }
+                    CheckBox { text: "Solo errori e omesse"; checked <=> root.errors-only; toggled => {root.act("result");} }
+                    Body { text: root.details; }
+                }
+                if root.page == "stats": Panel {
+                    Heading { text: "Statistiche"; }
+                    Body { text: root.bank; }
+                    ComboBox { model: ["Tutte","Ufficiale","Casuale","Equilibrata","Intelligente"]; current-value <=> root.stats-series; }
+                    ComboBox { model: root.stats-topics; current-value <=> root.stats-topic; }
+                    LineEdit { text <=> root.since; placeholder-text: "Dal giorno (AAAA-MM-GG)"; }
+                    LineEdit { text <=> root.until; placeholder-text: "Al giorno (AAAA-MM-GG)"; }
+                    Button { text: "Aggiorna statistiche"; clicked => {root.act("stats");} }
+                    Body { text: root.details; }
+                    for s in root.history: Button { text: s.label; clicked => {root.open-entry("result",s.key);} }
+                }
+            }
+        }
+    }
+}
