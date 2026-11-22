@@ -12,6 +12,8 @@ use fsrs::{FSRS, MemoryState};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Deserialize;
 
+mod catalog;
+
 const AGAIN_DELAY_SECONDS: i64 = 10 * 60;
 const SECONDS_PER_DAY: f32 = 86_400.0;
 
@@ -26,6 +28,34 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Elenca le banche dati ufficiali catalogate e le patenti supportate.
+    Catalog,
+    /// Importa un listato JSON/CSV normalizzato per la patente indicata.
+    ImportForLicense {
+        file: PathBuf,
+        #[arg(long)]
+        license: String,
+        #[arg(long, default_value = "conseguimento")]
+        procedure: String,
+    },
+    /// Studia il listato corretto in base alla categoria.
+    StudyForLicense {
+        #[arg(long)]
+        license: String,
+        #[arg(long, default_value = "conseguimento")]
+        procedure: String,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long, default_value_t = 0.90)]
+        retention: f32,
+    },
+    /// Statistiche della patente e procedura scelte.
+    StatsForLicense {
+        #[arg(long)]
+        license: String,
+        #[arg(long, default_value = "conseguimento")]
+        procedure: String,
+    },
     /// Importa data/questions.json del progetto simulatore-quiz-patente.
     ImportJson {
         file: PathBuf,
@@ -114,6 +144,27 @@ fn main() -> Result<()> {
     init_database(&conn)?;
 
     match cli.command {
+        Command::Catalog => catalog::print()?,
+        Command::ImportForLicense { file, license, procedure } => {
+            let version = catalog::version_for(&license, &procedure)?;
+            let questions = load_normalized_questions(&file)?;
+            if version == "AB-7020" {
+                ensure!(questions.len() == 7020,
+                    "Il set A/B da 7.020 affermazioni ne contiene {}. Importazione rifiutata.",
+                    questions.len());
+            }
+            println!("Patente {} ({}) -> banca dati {}", license, procedure, version);
+            import_questions(&mut conn, &version, questions)?;
+        }
+        Command::StudyForLicense { license, procedure, limit, retention } => {
+            let version = catalog::version_for(&license, &procedure)?;
+            ensure_imported(&conn, &version)?;
+            study(&mut conn, &version, limit, retention)?;
+        }
+        Command::StatsForLicense { license, procedure } => {
+            let version = catalog::version_for(&license, &procedure)?;
+            stats(&conn, &version)?;
+        }
         Command::ImportJson { file, version } => {
             let body = fs::read_to_string(&file)
                 .with_context(|| format!("Lettura {}", file.display()))?;
@@ -147,6 +198,48 @@ fn main() -> Result<()> {
             media_out,
         } => export_anki(&conn, &version, &output, image_root, media_out)?,
     }
+    Ok(())
+}
+
+/// Solo file normalizzati verificati: i PDF ministeriali richiedono un estrattore
+/// dedicato e controlli di qualità prima dell'importazione.
+fn load_normalized_questions(file: &Path) -> Result<Vec<SourceQuestion>> {
+    let ext = file.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "json" => {
+            let body = fs::read_to_string(file)
+                .with_context(|| format!("Lettura {}", file.display()))?;
+            let source: SourceList = serde_json::from_str(&body)?;
+            Ok(source.domande)
+        }
+        "csv" => {
+            let mut reader = csv::Reader::from_path(file)?;
+            let mut questions = Vec::new();
+            for row in reader.deserialize::<CsvQuestion>() {
+                let row = row?;
+                questions.push(SourceQuestion {
+                    id: row.id,
+                    quesito_id: row.quesito_id,
+                    argomento_id: row.argomento_id,
+                    argomento_nome: row.argomento_nome,
+                    testo: row.testo,
+                    risposta: parse_truth(&row.risposta)?,
+                    figura: row.figura.filter(|s| !s.trim().is_empty()),
+                });
+            }
+            Ok(questions)
+        }
+        _ => bail!("Formato non supportato: usa un JSON/CSV già normalizzato e verificato"),
+    }
+}
+
+fn ensure_imported(conn: &Connection, version: &str) -> Result<()> {
+    let total: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM questions WHERE source_version=?1", [version], |r| r.get(0)
+    )?;
+    ensure!(total > 0,
+        "Banca dati {} non ancora importata. Usa import-for-license con il JSON/CSV verificato.",
+        version);
     Ok(())
 }
 
