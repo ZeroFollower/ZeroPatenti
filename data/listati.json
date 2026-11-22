@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "source_index_url": "https://www.ilportaledellautomobilista.it/web/portale-automobilista/-/quiz-per-le-patenti-am-b-superiori-e-cqc",
+  "checked_at": "2026-11-22",
+  "listati": [
+    {
+      "nome": "AM conseguimento",
+      "patenti": [
+        "AM"
+      ],
+      "procedura": "conseguimento",
+      "versione": "AM-MIT-2025",
+      "pronto": true,
+      "fonte": "https://www.ilportaledellautomobilista.it/documents/56611/57321/Domande%2BAM%2Bitaliano%2B04%2B04%2B2025/ad547e38-92c7-4f92-850d-487be020ccc3",
+      "note": "Listato AM separato: estrazione e verifica PDF ancora necessarie"
+    },
+    {
+      "nome": "A/B conseguimento",
+      "patenti": [
+        "A1",
+        "A2",
+        "A",
+        "B1",
+        "B",
+        "BE"
+      ],
+      "procedura": "conseguimento",
+      "versione": "AB-7020",
+      "pronto": true,
+      "fonte": "https://www.ilportaledellautomobilista.it/documents/56611/57319/210926_Conseguimento%2BA-B%2Bitaliano.pdf/07091bb8-a16b-4fa1-b921-4fd21fa5b650",
+      "note": "7.020 affermazioni: usare import JSON solo dopo verifica rispetto alla fonte ministeriale"
+    },
+    {
+      "nome": "Superiori conseguimento",
+      "patenti": [
+        "C1",
+        "C1E",
+        "C",
+        "CE",
+        "D1",
+        "D1E",
+        "D",
+        "DE"
+      ],
+      "procedura": "conseguimento",
+      "versione": "SUPERIORI-MIT-2025",
+      "pronto": false,
+      "fonte": "https://www.ilportaledellautomobilista.it/documents/56611/57321/Domande%2BSuperiori%2Bitaliano%2B04%2B04%2B2025/7763ce74-4de6-4ad9-9129-7a7c21efd1fb",
+      "note": "Serve definire/validare i sottoinsiemi pertinenti a ciascuna categoria"
+    },
+    {
+      "nome": "CQC nuovo listato",
+      "patenti": [
+        "CQC_MERCI",
+        "CQC_PERSONE"
+      ],
+      "procedura": "cqc",
+      "versione": "CQC-MIT-2025",
+      "pronto": false,
+      "fonte": "https://www.ilportaledellautomobilista.it/documents/56611/57321/DomandeCqcNuovoListatoItaliano%2B25.11.2025/d71c5860-08c9-41e3-9133-8148e6fcd9fa",
+      "note": "Serve separare parte comune, merci e persone, e verificare applicabilità"
+    },
+    {
+      "nome": "CAP",
+      "patenti": [
+        "CAP"
+      ],
+      "procedura": "abilitazione",
+      "versione": "CAP-MIT-DA-VALIDARE",
+      "pronto": false,
+      "fonte": "https://www.ilportaledellautomobilista.it/documents/56611/100788331/DomandeCap.pdf/04d6a5d6-ec70-4e44-b09c-c334aafc99e6",
+      "note": "Versione e regole specifiche non ancora verificate"
+    },
+    {
+      "nome": "AM revisione",
+      "patenti": [
+        "AM"
+      ],
+      "procedura": "revisione",
+      "versione": "AM-REV-2025",
+      "pronto": true,
+      "fonte": "https://www.ilportaledellautomobilista.it/documents/56611/57321/Domande+Revisione+AM+italiano+04+04+2025/4f244772-9daf-4ffd-91e4-a60707127f98",
+      "note": "Non confondere con l'esame di conseguimento AM"
+    },
+    {
+      "nome": "A/B revisione",
+      "patenti": [
+        "A1",
+        "A2",
+        "A",
+        "B1",
+        "B",
+        "BE"
+      ],
+      "procedura": "revisione",
+      "versione": "AB-REV-MIT",
+      "pronto": true,
+      "fonte": "https://www.ilportaledellautomobilista.it/web/portale-automobilista/-/quiz-per-le-patenti-am-b-superiori-e-cqc",
+      "note": "Selezionare il PDF di revisione AB, diverso dal conseguimento"
+    },
+    {
+      "nome": "Superiori revisione",
+      "patenti": [
+        "C1",
+        "C1E",
+        "C",
+        "CE",
+        "D1",
+        "D1E",
+        "D",
+        "DE"
+      ],
+      "procedura": "revisione",
+      "versione": "SUPERIORI-REV-MIT",
+      "pronto": false,
+      "fonte": "https://www.ilportaledellautomobilista.it/web/portale-automobilista/-/quiz-per-le-patenti-am-b-superiori-e-cqc",
+      "note": "Serve verifica e selezione del listato di revisione per categoria"
+    },
+    {
+      "nome": "CQC merci revisione",
+      "patenti": [
+        "CQC_MERCI"
+      ],
+      "procedura": "revisione",
+      "versione": "CQC-MERCI-REV-MIT",
+      "pronto": false,
+      "fonte": "https://www.ilportaledellautomobilista.it/web/portale-automobilista/-/quiz-per-le-patenti-am-b-superiori-e-cqc",
+      "note": "Serve verifica del listato di revisione CQC merci"
+    },
+    {
+      "nome": "CQC persone revisione",
+      "patenti": [
+        "CQC_PERSONE"
+      ],
+      "procedura": "revisione",
+      "versione": "CQC-PERSONE-REV-MIT",
+      "pronto": false,
+      "fonte": "https://www.ilportaledellautomobilista.it/web/portale-automobilista/-/quiz-per-le-patenti-am-b-superiori-e-cqc",
+      "note": "Serve verifica del listato di revisione CQC persone"
+    }
+  ]
+}
