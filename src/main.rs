@@ -290,6 +290,7 @@ fn study(
         if let Some(figure) = &card.figure {
             println!("Figura: {figure} (aprila nella directory public/ del dataset)");
         }
+        mark_seen(conn, &card.id, Utc::now().timestamp())?;
         let guess = loop {
             let value = prompt("Risposta [V/F] o [Q] per uscire: ")?;
             match value.as_str() {

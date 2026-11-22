@@ -18,6 +18,21 @@ pub struct ExamRule {
     pub duration_seconds: u64,
 }
 
+/// Per-chapter draws in stable topic-ID order for each supported official sheet.
+/// A/B chapter weights for the 30-question sheets introduced in December 2021:
+/// https://www.patente.it/ecom.dll/noAjax?idc=4500
+/// AM computerized sheets draw three from each chapter (SIDA, September 2014):
+/// https://www.patente.it/upload/pdf/2014_03.pdf
+pub fn official_quotas(bank_version: &str) -> Option<&'static [usize]> {
+    match bank_version {
+        "AB-7020" => Some(&[
+            1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 2, 1, 1, 1, 1, 2, 1, 1, 1,
+        ]),
+        "AM-MIT-2025" => Some(&[3; 10]),
+        _ => None,
+    }
+}
+
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     conn.execute_batch("CREATE TABLE IF NOT EXISTS exam_rules (
         license TEXT NOT NULL, procedure TEXT NOT NULL, bank_version TEXT NOT NULL,

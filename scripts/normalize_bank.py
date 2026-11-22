@@ -73,7 +73,10 @@ def normalize(pdf_path, destination):
                     if merged:
                         text, answer = merged.groups()
                         current["risposta"] = answer == "VERO"
-                    current["testo"] = (current["testo"] + " " + text).strip()
+                    # The three hyphenated A/B compounds that wrap across PDF
+                    # lines retain their spelling and question identity in v0.1.
+                    separator = "" if version == "AB-7020" and current["testo"].endswith("-") else " "
+                    current["testo"] = (current["testo"] + separator + text).strip()
                 elif current and x > 300 and text in ("VERO", "FALSO"):
                     if current["risposta"] is not None:
                         raise ValueError(f"Risposta duplicata per {current['id']}")
@@ -87,12 +90,22 @@ def normalize(pdf_path, destination):
     # Two headings continue across a page break. Resolve only unique prefixes.
     full_titles = sorted(title for title in topics
                          if not any(other != title and other.startswith(title) for other in topics))
+    first_group = {}
     for row in rows:
         matches = [name for name in full_titles if name.startswith(row["argomento_nome"])]
         if len(matches) != 1:
             raise ValueError(f"Argomento ambiguo per {row['id']}")
-        row["argomento_nome"] = matches[0]
-        row["argomento_id"] = full_titles.index(matches[0]) + 1
+        title = matches[0]
+        row["argomento_nome"] = title
+        group = row["quesito_id"]
+        first_group[title] = min(group, first_group.get(title, group))
+    # A/B chapter numbers follow their first official question group. PDF
+    # pages are out of chapter order. This preserves all v0.1 --topic IDs.
+    if version == "AB-7020":
+        full_titles.sort(key=first_group.__getitem__)
+    chapter_ids = {title: index for index, title in enumerate(full_titles, 1)}
+    for row in rows:
+        row["argomento_id"] = chapter_ids[row["argomento_nome"]]
     checksum = hashlib.sha256()
     for row in sorted(rows, key=lambda row: row["id"]):
         body = json.dumps(list(row.values()), ensure_ascii=False, separators=(",", ":"))
