@@ -139,6 +139,17 @@ pub fn import_questions(
     version: &str,
     questions: Vec<SourceQuestion>,
 ) -> Result<usize> {
+    let tx = conn.transaction()?;
+    let count = import_questions_in(&tx, version, questions)?;
+    tx.commit()?;
+    Ok(count)
+}
+
+pub(crate) fn import_questions_in(
+    tx: &rusqlite::Transaction<'_>,
+    version: &str,
+    questions: Vec<SourceQuestion>,
+) -> Result<usize> {
     ensure!(!version.trim().is_empty(), "Versione mancante");
     ensure!(!questions.is_empty(), "Non ci sono domande da importare");
     let mut ids = HashSet::new();
@@ -148,7 +159,6 @@ pub fn import_questions(
         ensure!(ids.insert(q.id), "ID duplicato nel file: {}", q.id);
     }
 
-    let tx = conn.transaction()?;
     {
         let mut stmt = tx.prepare(
             "INSERT INTO questions (
@@ -194,7 +204,6 @@ pub fn import_questions(
             ])?;
         }
     }
-    tx.commit()?;
     Ok(questions.len())
 }
 
