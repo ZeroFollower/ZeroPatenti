@@ -1,7 +1,7 @@
 # ZeroPatenti — Simulazioni personalizzate, persistenza ibrida e statistiche
 
 **Data:** 2026-11-22  
-**Stato:** specifica aggiornata — in attesa dell'approvazione complessiva  
+**Stato:** specifica approvata il 22 novembre 2026, inclusa la GUI Slint per desktop e Android.
 **Metodo:** Superpowers Brainstorming
 
 ## 1. Obiettivo
@@ -111,5 +111,4 @@ di risposta, ripensamenti e navigazione. Non inviare telemetria esterna.
   `(session_id, event_type, occurred_at)`; scrittura e proiezione dello stato
   corrente nella stessa transazione.
 
-**Da approvare prima di implementare:** questa specifica complessiva.
-Dopo l'approvazione si prepara il piano tecnico con Superpowers Writing Plans.
+Il piano tecnico è in [Simulazioni personalizzate](../plans/2026-11-22-simulazioni-personalizzate.md).
