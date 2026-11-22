@@ -697,6 +697,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn topic_filter_never_leaks_other_topics() {
+        let mut db = Connection::open_in_memory().unwrap();
+        init_database(&db).unwrap();
+        let questions = vec![
+            SourceQuestion { id:1, quesito_id:1, argomento_id:11,
+                argomento_nome:"Segnali".into(), testo:"Q1".into(),
+                risposta:true, figura:None },
+            SourceQuestion { id:2, quesito_id:2, argomento_id:22,
+                argomento_nome:"Precedenze".into(), testo:"Q2".into(),
+                risposta:false, figura:None },
+            SourceQuestion { id:3, quesito_id:3, argomento_id:11,
+                argomento_nome:"Segnali".into(), testo:"Q3".into(),
+                risposta:true, figura:None },
+        ];
+        import_questions(&mut db,"FILTER-TEST",questions).unwrap();
+        let selected = due_cards(&db,"FILTER-TEST",10,&[11],false).unwrap();
+        assert_eq!(selected.len(),2);
+        assert!(selected.iter().all(|c|c.topic=="Segnali"));
+        assert!(validate_topics(&db,"FILTER-TEST",&[999]).is_err());
+        assert_eq!(due_cards(&db,"FILTER-TEST",10,&[11],true).unwrap().len(),0);
+        // Un solo ripasso in scadenza per la materia 11, mai la materia 22.
+        db.execute("INSERT INTO card_state VALUES ('FILTER-TEST:1',1,1,5,1,2,1)",[]).unwrap();
+        db.execute("INSERT INTO card_state VALUES ('FILTER-TEST:2',1,1,5,1,2,1)",[]).unwrap();
+        let reviews=due_cards(&db,"FILTER-TEST",10,&[11],true).unwrap();
+        assert_eq!(reviews.len(),1);
+        assert_eq!(reviews[0].id,"FILTER-TEST:1");
+        assert_eq!(due_cards(&db,"FILTER-TEST",10,&[22],true).unwrap().len(),1);
+    }
+
+    #[test]
     fn truth_parsing() {
         assert!(parse_truth("VERO").unwrap());
         assert!(!parse_truth("Falso").unwrap());
