@@ -362,6 +362,7 @@ fn memory(db: &Connection, f: &Filters, now: i64) -> Result<Memory> {
         AND (NOT :restrict OR q.source_version IN (SELECT value FROM json_each(:banks)))";
     let mut stmt = db.prepare(&format!(
         "SELECT s.last_review_at,s.due_at,s.stability,s.stability_fast,s.difficulty,
+        EXISTS(SELECT 1 FROM study_card_views v WHERE v.card_id=q.card_id) OR
         EXISTS(SELECT 1 FROM exam_events e WHERE e.event_type='QuestionDisplayed'
                AND json_extract(e.payload_json,'$.question_id')=q.card_id)
         FROM questions q LEFT JOIN card_state s ON s.card_id=q.card_id WHERE {scope}"
@@ -543,7 +544,7 @@ impl Dashboard {
     pub fn summary(&self) -> String {
         let m = &self.memory;
         let mut out = format!(
-            "Copertura attuale della banca · {} viste su {} · {} studiate\nRipassi in scadenza · {} già dovuti · {} nei prossimi 7 giorni · {} successivi\n{} risposte di studio e ripasso nel periodo",
+            "Copertura attuale della banca · {} viste su {} · {} studiate\nRipassi in scadenza · {} già dovuti · {} nei prossimi 7 giorni · {} successivi\n{} risposte registrate nel periodo da studio, ripasso e prove personalizzate",
             m.seen, m.total, m.studied, m.due, m.due_next_week, m.due_later, m.reviews
         );
         if m.repeat_reviews > 0 {

@@ -1,7 +1,7 @@
 use super::statistics::{Metrics, Observation, Pauses, Topic, observations, topics};
-use super::store::{self, Action};
+use super::store;
 use anyhow::{Result, ensure};
-use rusqlite::{Connection, Transaction, params};
+use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -153,10 +153,23 @@ impl Correction {
     }
 }
 
-/// For live foreground timers use store::command with the current monotonic clock.
+/// Submit a paused session or read its frozen result. An active session must
+/// use `store::command` with its foreground clock to close the final segment.
 pub fn submit(conn: &mut Connection, id: &str) -> Result<Correction> {
-    store::command(conn, id, Action::Submit, 0, chrono::Utc::now().timestamp())?;
-    correction(conn, id, false)
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let active: bool = tx.query_row(
+        "SELECT status='active' FROM exam_sessions WHERE session_id=?1",
+        [id],
+        |r| r.get(0),
+    )?;
+    ensure!(
+        !active,
+        "Per consegnare una prova attiva serve il suo cronometro"
+    );
+    finish(&tx, id, chrono::Utc::now().timestamp())?;
+    let report = correction(&tx, id, false)?;
+    tx.commit()?;
+    Ok(report)
 }
 
 pub fn correction(conn: &Connection, id: &str, errors_only: bool) -> Result<Correction> {

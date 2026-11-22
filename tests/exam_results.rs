@@ -123,6 +123,44 @@ fn custom_submission_freezes_correction_and_applies_each_answer_once() -> Result
 }
 
 #[test]
+fn viewing_an_unrated_study_card_counts_only_toward_coverage() -> Result<()> {
+    let db = Connection::open_in_memory()?;
+    fixture(&db)?;
+    let filter = Filters {
+        bank_version: Some("AB-7020".into()),
+        ..Default::default()
+    };
+    zeropatenti::storage::mark_seen(&db, "q3", 100)?;
+    zeropatenti::storage::mark_seen(&db, "q3", 105)?;
+    zeropatenti::storage::mark_seen(&db, "am", 105)?;
+    let m = dashboard(&db, &filter, 110)?.memory;
+    assert_eq!((m.total, m.seen, m.studied, m.reviews), (4, 3, 0, 0));
+    assert_eq!(
+        db.query_row(
+            "SELECT first_seen_at FROM study_card_views WHERE card_id='q3'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )?,
+        100
+    );
+    Ok(())
+}
+
+#[test]
+fn clockless_submission_requires_a_paused_session_or_a_frozen_result() -> Result<()> {
+    use zeropatenti::exam::store::{Action, command};
+    let mut db = Connection::open_in_memory()?;
+    fixture(&db)?;
+    command(&mut db, "s", Action::Resume, 3500, 120)?;
+    assert!(submit(&mut db, "s").is_err());
+    assert!(correction(&db, "s", false).is_err());
+    command(&mut db, "s", Action::Pause, 5900, 123)?;
+    assert_eq!(submit(&mut db, "s")?.active_ms, 5900);
+    assert_eq!(submit(&mut db, "s")?.active_ms, 5900);
+    Ok(())
+}
+
+#[test]
 fn failed_second_review_rolls_back_first_review_and_result() -> Result<()> {
     let mut db = Connection::open_in_memory()?;
     fixture(&db)?;

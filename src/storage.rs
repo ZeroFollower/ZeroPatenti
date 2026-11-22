@@ -83,6 +83,10 @@ pub fn init_database(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_questions_version
           ON questions(source_version);
+        CREATE TABLE IF NOT EXISTS study_card_views (
+            card_id TEXT PRIMARY KEY NOT NULL REFERENCES questions(card_id) ON DELETE CASCADE,
+            first_seen_at INTEGER NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS card_state (
             card_id TEXT PRIMARY KEY REFERENCES questions(card_id) ON DELETE CASCADE,
             stability REAL NOT NULL,
@@ -109,6 +113,16 @@ pub fn init_database(conn: &Connection) -> Result<()> {
     )?;
     crate::exam::catalog::migrate(conn)?;
     crate::exam::store::migrate(conn)?;
+    Ok(())
+}
+
+/// Remember the first observed study/review display, including an unrated card.
+pub fn mark_seen(conn: &Connection, card_id: &str, now: i64) -> Result<()> {
+    conn.execute(
+        "INSERT INTO study_card_views(card_id,first_seen_at) VALUES (?1,?2)
+         ON CONFLICT(card_id) DO NOTHING",
+        params![card_id, now],
+    )?;
     Ok(())
 }
 
