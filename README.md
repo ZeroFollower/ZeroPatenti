@@ -25,6 +25,43 @@
 
 **Nella GUI non devono comparire sigle o nomi degli algoritmi di ripetizione.**
 
+## Selezione delle banche dati per patente
+
+Ogni categoria usa esclusivamente la banca dati corretta: `AM` ha un set
+separato, `A1/A2/A/B1/B/BE` condividono il listato `A/B`, e i listati
+di **revisione** non vengono mai mescolati al conseguimento.
+
+Il catalogo versionato si trova in [`data/listati.json`](data/listati.json).
+Le patenti superiori e le CQC rimangono non selezionabili finché non saranno
+validati i filtri dei sottoinsiemi per categoria.
+
+```bash
+cargo run -- catalog
+
+# Seleziona automaticamente AB-7020 per la patente B
+cargo run -- import-for-license data/questions.json --license B
+cargo run -- study-for-license --license B --limit 30
+cargo run -- stats-for-license --license B
+
+# Revisione e conseguimento sono due archivi separati
+cargo run -- study-for-license --license AM --procedure revisione
+```
+
+L'importazione automatica da PDF ministeriale e l'aggiornamento remoto dei
+listati **non sono ancora implementati**: i comandi accettano JSON/CSV
+normalizzati da verificare rispetto alla fonte ufficiale, inclusi immagini e
+soluzioni. Nessuna banca dati completa è attualmente inclusa nel repository.
+
+## Versioni aggiornate e controlli
+
+Usiamo versioni **stabili** e recenti, con proposte quotidiane di aggiornamento
+Cargo e aggiornamenti settimanali delle GitHub Actions mediante Dependabot.
+Ogni aggiornamento deve superare i controlli CI prima di essere integrato.
+Il catalogo ministeriale segue un ciclo di aggiornamento indipendente:
+pubblicazione di un nuovo PDF non implica automaticamente sua entrata in uso.
+
+Vedi [Politica aggiornamenti](docs/POLITICA_AGGIORNAMENTI.md).
+
 ## Requisiti
 
 - Rust stable aggiornato, toolchain Cargo con edizione 2024.
