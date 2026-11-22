@@ -1,7 +1,7 @@
 # ZeroPatenti — Simulazioni personalizzate, persistenza ibrida e statistiche
 
 **Data:** 2026-11-22  
-**Stato:** bozza progettuale in attesa di approvazione  
+**Stato:** specifica aggiornata — in attesa dell'approvazione complessiva  
 **Metodo:** Superpowers Brainstorming
 
 ## 1. Obiettivo
@@ -85,5 +85,31 @@ Macchina a stati: `created -> active <-> paused -> submitted`; `created/active/p
 - I dati di una patente/versione non si mescolano a un'altra; statistiche e filtri rispettano argomenti e tipi di prova.
 - Test Rust + SQLite + UI Slint, con build desktop e Android, prima di dichiarare la funzionalità completa.
 
-## 9. Questioni per approvazione
-Confermare la raccolta degli eventi **QuestionDisplayed/AnswerChanged** per tempi e ripensamenti. Per correttezza del timer su Android, un passaggio al background viene trattato come sospensione automatica nella modalità personalizzata; il timer della prova ufficiale resta soggetto alle regole specifiche dell'esame.
+## 9. Decisione confermata: eventi per statistiche approfondite
+
+Approvato: registrare in **SQLite locale** gli eventi `QuestionDisplayed`,
+`AnswerSelected`, `AnswerChanged` e `AnswerCleared` per analizzare tempi
+di risposta, ripensamenti e navigazione. Non inviare telemetria esterna.
+
+**Semantica di misurazione**
+- Aprire un segmento di visualizzazione quando una domanda entra in primo piano;
+  chiuderlo all'uscita, pausa, background, consegna o termine della prova.
+- Cronometrare soltanto segmenti attivi; se la stessa domanda viene riaperta,
+  sommare i segmenti osservati senza azzerare la storia.
+- Separare *tempo prima della prima risposta*, *tempo totale sulla domanda* e
+  *tempo prima della risposta definitiva*. Non equiparare automaticamente
+  permanenza a difficoltà cognitiva.
+- Registrare ogni modifica effettiva (`VERO -> FALSO`, `FALSO -> VERO`),
+  evitando eventi duplicati quando l'utente preme due volte la stessa opzione.
+- Usare tempo monotono nella sessione attiva e checkpoint persistenti;
+  all'avvio dopo crash, trattare la permanenza non osservabile come ignota,
+  senza attribuirla retroattivamente alla domanda visualizzata.
+- Le statistiche distinguono sempre dati misurati e stime; una sessione
+  annullata può conservare eventi diagnostici locali ma non genera risultati
+  d'esame o ripassi.
+- Creare indici su `(session_id, sequence)` e
+  `(session_id, event_type, occurred_at)`; scrittura e proiezione dello stato
+  corrente nella stessa transazione.
+
+**Da approvare prima di implementare:** questa specifica complessiva.
+Dopo l'approvazione si prepara il piano tecnico con Superpowers Writing Plans.
