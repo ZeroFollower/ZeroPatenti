@@ -12,6 +12,18 @@ component Panel inherits Rectangle {
     background: #ffffff; border-radius: 12px; border-width: 1px; border-color: #ccdbd8;
     VerticalLayout { padding: 14px; spacing: 10px; @children }
 }
+component CancelExam inherits VerticalLayout {
+    in-out property <bool> confirming;
+    callback cancel;
+    spacing: 5px;
+    if !root.confirming: Button { text: "Annulla prova"; clicked => { root.confirming = true; } }
+    if root.confirming: Body { text: "Annullare questa prova? Non potrai riprenderla."; }
+    if root.confirming: HorizontalLayout {
+        spacing: 6px;
+        Button { text: "Mantieni prova"; clicked => { root.confirming = false; } }
+        Button { text: "Conferma annullamento"; clicked => { root.cancel(); } }
+    }
+}
 export component AppWindow inherits Window {
     title: "ZeroPatenti";
     preferred-width: 760px; preferred-height: 760px;
@@ -40,6 +52,9 @@ export component AppWindow inherits Window {
     in-out property <string> clock-text;
     in-out property <string> answer;
     in-out property <[string]> grid;
+    out property <int> grid-page-size: 25;
+    in property <int> grid-start;
+    in property <int> question-count;
     in-out property <int> position;
     in-out property <bool> confirm-cancel;
     in-out property <string> study-stage;
@@ -51,6 +66,8 @@ export component AppWindow inherits Window {
     in-out property <string> since;
     in-out property <string> until;
     in-out property <string> stats-series: "Tutte";
+    in-out property <[string]> stats-banks;
+    in-out property <string> stats-bank;
     in-out property <string> stats-topic: "Tutti";
     in-out property <[string]> stats-topics;
     callback act(string);
@@ -58,6 +75,10 @@ export component AppWindow inherits Window {
     callback topic-toggle(int);
     pure callback matches-topic(string,string) -> bool;
     callback open-entry(string,string);
+    function open-question(index: int) {
+        root.jump(index);
+        content-scroll.content-y = 0px;
+    }
     VerticalLayout {
         padding-top: root.safe-area-insets.top;
         padding-bottom: root.safe-area-insets.bottom;
@@ -73,10 +94,10 @@ export component AppWindow inherits Window {
             }
         }
         if root.notice != "": Rectangle {
-            background: #fff0d1; min-height: note.preferred-height + 16px;
+            background: #fff0d1; height: note.preferred-height + 16px;
             note := Text { x: 14px; width: parent.width - 28px; text: root.notice; wrap: word-wrap; vertical-alignment: center; color: #563f17; }
         }
-        ScrollView {
+        content-scroll := ScrollView {
             vertical-stretch: 1;
             VerticalLayout {
                 alignment: start; padding: 14px; spacing: 14px;
@@ -141,7 +162,7 @@ export component AppWindow inherits Window {
                     if root.page == "exam": Body { text: root.clock-text; }
                     if root.has-figure: Image { height: 145px; source: root.figure; image-fit: contain; accessible-label: "Figura del quesito"; }
                     Body { text: root.prompt; font-size: 21px; }
-                    if root.page == "exam" || root.study-stage == "answer": HorizontalLayout {
+                    if root.page == "study" && root.study-stage == "answer": HorizontalLayout {
                         spacing: 8px;
                         Button { text: "Vero"; primary: root.answer == "Vero"; clicked => {root.act("true");} }
                         Button { text: "Falso"; primary: root.answer == "Falso"; clicked => {root.act("false");} }
@@ -151,24 +172,30 @@ export component AppWindow inherits Window {
                         for label[i] in ["Da ripassare","Difficile","Normale","Facile"]: Button { text: label; clicked => {root.jump(i + 1);} }
                     }
                     if root.page == "study" && root.study-stage == "next": Button { text: "Continua"; clicked => {root.act("next");} }
-                    if root.page == "exam": VerticalLayout {
-                        spacing: 8px;
-                        Button { text: "Cancella risposta"; enabled: root.answer != ""; clicked => {root.act("clear");} }
-                        HorizontalLayout {
-                            spacing: 6px;
-                            Button { text: "Precedente"; enabled: root.position > 0; clicked => {root.jump(root.position - 1);} }
-                            Button { text: "Successiva"; enabled: root.position + 1 < root.grid.length; clicked => {root.jump(root.position + 1);} }
+                }
+                if root.page == "exam": Panel {
+                    Body { text: "Domande " + (root.grid-start + 1) + "–" + (root.grid-start + root.grid.length) + " di " + root.question-count; }
+                    if root.question-count > root.grid-page-size: HorizontalLayout {
+                        spacing: 6px;
+                        Button {
+                            text: "Gruppo prec."; accessible-label: "Gruppo precedente";
+                            enabled: root.grid-start > 0;
+                            clicked => { root.jump(root.grid-start - root.grid-page-size); }
                         }
-                        Rectangle {
-                            height: ceil(root.grid.length / 5) * 42px;
-                            for n[i] in root.grid: Button {
-                                x: mod(i, 5) * parent.width / 5; y: floor(i / 5) * 42px;
-                                width: parent.width / 5 - 2px; height: 40px; text: n;
-                                primary: i == root.position; clicked => {root.jump(i);}
-                            }
+                        Button {
+                            text: "Gruppo succ."; accessible-label: "Gruppo successivo";
+                            enabled: root.grid-start + root.grid-page-size < root.question-count;
+                            clicked => { root.jump(root.grid-start + root.grid-page-size); }
                         }
-                        Button { text: "Consegna"; primary: true; clicked => {root.act("submit");} }
-                        Button { text: "Interrompi e salva"; clicked => {root.act("pause");} }
+                    }
+                    Rectangle {
+                        height: floor((root.grid.length + 4) / 5) * 42px;
+                        for n[i] in root.grid: Button {
+                            x: mod(i, 5) * parent.width / 5; y: floor(i / 5) * 42px;
+                            width: parent.width / 5 - 2px; height: 40px; text: n;
+                            primary: root.grid-start + i == root.position;
+                            clicked => { root.open-question(root.grid-start + i); }
+                        }
                     }
                 }
                 if root.page == "paused": Panel {
@@ -177,12 +204,10 @@ export component AppWindow inherits Window {
                     Body { text: root.clock-text; }
                     Button { text: "Riprendi"; primary: true; clicked => {root.act("resume");} }
                 }
-                if root.page == "exam" || root.page == "paused": Panel {
-                    if !root.confirm-cancel: Button { text: "Annulla prova"; clicked => {root.confirm-cancel = true;} }
-                    if root.confirm-cancel: VerticalLayout {
-                        Body { text: "Annullare questa prova? Non potrai riprenderla."; }
-                        Button { text: "Mantieni prova"; clicked => {root.confirm-cancel = false;} }
-                        Button { text: "Conferma annullamento"; clicked => {root.act("cancel");} }
+                if root.page == "paused": Panel {
+                    CancelExam {
+                        confirming <=> root.confirm-cancel;
+                        cancel => { root.act("cancel"); }
                     }
                 }
                 if root.page == "result": Panel {
@@ -193,7 +218,7 @@ export component AppWindow inherits Window {
                 }
                 if root.page == "stats": Panel {
                     Heading { text: "Statistiche"; }
-                    Body { text: root.bank; }
+                    ComboBox { accessible-label: "Edizione del listato"; model: root.stats-banks; current-value <=> root.stats-bank; selected(v) => {root.stats-topic = "Tutti";root.act("stats");} }
                     ComboBox { model: ["Tutte","Ufficiale","Casuale","Equilibrata","Intelligente"]; current-value <=> root.stats-series; }
                     ComboBox { model: root.stats-topics; current-value <=> root.stats-topic; }
                     LineEdit { text <=> root.since; placeholder-text: "Dal giorno (AAAA-MM-GG)"; }
@@ -201,6 +226,34 @@ export component AppWindow inherits Window {
                     Button { text: "Aggiorna statistiche"; clicked => {root.act("stats");} }
                     Body { text: root.details; }
                     for s in root.history: Button { text: s.label; clicked => {root.open-entry("result",s.key);} }
+                }
+            }
+        }
+        if root.page == "exam": Rectangle {
+            background: #ffffff;
+            border-width: 1px; border-color: #ccdbd8;
+            vertical-stretch: 0;
+            VerticalLayout {
+                padding: 8px; spacing: 5px;
+                HorizontalLayout {
+                    spacing: 6px;
+                    Button { text: "Vero"; primary: root.answer == "Vero"; clicked => { root.act("true"); } }
+                    Button { text: "Falso"; primary: root.answer == "Falso"; clicked => { root.act("false"); } }
+                    Button { text: "Cancella risposta"; enabled: root.answer != ""; clicked => { root.act("clear"); } }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    Button { text: "Precedente"; enabled: root.position > 0; clicked => { root.open-question(root.position - 1); } }
+                    Button { text: "Successiva"; enabled: root.position + 1 < root.question-count; clicked => { root.open-question(root.position + 1); } }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    Button { text: "Interrompi e salva"; clicked => { root.act("pause"); } }
+                    Button { text: "Consegna"; primary: true; clicked => { root.act("submit"); } }
+                }
+                CancelExam {
+                    confirming <=> root.confirm-cancel;
+                    cancel => { root.act("cancel"); }
                 }
             }
         }

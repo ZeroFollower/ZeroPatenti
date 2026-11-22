@@ -1,6 +1,6 @@
 # ZeroPatenti — Interfaccia Slint per desktop e Android
 
-**Stato:** specifica approvata; GUI non ancora implementata nel codice sorgente incluso.
+**Stato:** la GUI desktop e Android usa la libreria Rust condivisa e le schermate in [ui/app.slint](../ui/app.slint). Il [README](../README.md) descrive avvio e importazione.
 
 ## Stack
 
@@ -33,11 +33,11 @@
 
 Per una risposta errata usare 1 automaticamente. Per una risposta corretta consentire tutte e quattro le valutazioni. Per ripassi ravvicinati il ritardo applicativo configurato (es. dieci minuti) è separato dal calendario a giorni calcolato da FSRS.
 
-## Percorso di implementazione previsto
+## Organizzazione del codice
 
-- [ ] Estrarre le funzionalità da `src/main.rs` in un crate `zeropatenti-core`, con API indipendenti dalla CLI.
-- [ ] Creare crate `zeropatenti-ui` con componenti `.slint` riutilizzabili e layout adattivi.
-- [ ] Aggiungere `zeropatenti-desktop` e bootstrap Android (cargo-apk2 / android-activity).
+- Il motore è la libreria dello stesso package Cargo. I moduli `storage`, `review` ed `exam` sono indipendenti dalla CLI.
+- Il controller `src/gui.rs` collega quesiti, eventi e risultati ai componenti Slint.
+- L'eseguibile `zeropatenti-gui` e il bootstrap `src/android.rs` aprono la stessa interfaccia.
 - [ ] Integrare immagini locali, caching, accessibilità, navigazione tastiera e touch.
 - [ ] Testare Android emulator e dispositivi fisici; verificare la licenza Slint scelta.
 

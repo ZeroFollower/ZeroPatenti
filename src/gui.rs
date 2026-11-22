@@ -121,9 +121,7 @@ impl Controller {
         ui.set_bank(format!("{} · {total} domande", self.version).into());
         self.topic_ids = topics.iter().map(|t| t.id).collect();
         ui.set_selected_count(topics.len() as i32);
-        let mut stats_topics = vec!["Tutti".into()];
-        stats_topics.extend(topics.iter().map(|t| SharedString::from(t.name.as_str())));
-        ui.set_stats_topics(model(stats_topics));
+        ui.set_stats_bank(self.version.as_str().into());
         ui.set_stats_topic("Tutti".into());
         ui.set_topics(model(
             topics
@@ -392,12 +390,22 @@ impl Controller {
         ui.set_title_text(format!("Domanda {} di {}", s.index + 1, s.questions.len()).into());
         ui.set_prompt(question.text.as_str().into());
         ui.set_answer(question.answer.map(truth).unwrap_or("").into());
+        let page_size = ui.get_grid_page_size() as usize;
+        let start = s.index / page_size * page_size;
+        let end = (start + page_size).min(s.questions.len());
+        ui.set_grid_start(start as i32);
+        ui.set_question_count(s.questions.len() as i32);
         ui.set_grid(model(
-            s.questions
+            s.questions[start..end]
                 .iter()
                 .enumerate()
                 .map(|(i, q)| {
-                    format!("{}{}", i + 1, if q.answer.is_some() { " ✓" } else { "" }).into()
+                    format!(
+                        "{}{}",
+                        start + i + 1,
+                        if q.answer.is_some() { " ✓" } else { "" }
+                    )
+                    .into()
                 })
                 .collect(),
         ));
@@ -415,6 +423,52 @@ impl Controller {
     }
 
     fn stats(&self, ui: &AppWindow) -> Result<()> {
+        let license = ui.get_license();
+        let procedure = ui.get_procedure();
+        let mut editions = vec![SharedString::from(self.version.as_str())];
+        let mut stmt=self.db.prepare("SELECT DISTINCT bank_version FROM exam_sessions WHERE license=? AND procedure=? AND bank_version<>? ORDER BY bank_version")?;
+        for version in stmt.query_map(
+            params![license.as_str(), procedure.as_str(), self.version],
+            |row| row.get::<_, String>(0),
+        )? {
+            editions.push(version?.into());
+        }
+        let selected_version = ui.get_stats_bank();
+        ensure!(
+            editions.contains(&selected_version),
+            "Edizione non disponibile per questa patente"
+        );
+        ui.set_stats_banks(model(editions));
+        ui.set_stats_bank(selected_version.clone());
+        let mut stmt=self.db.prepare("SELECT topic_id, MIN(topic) FROM (
+            SELECT topic_id,topic FROM questions WHERE source_version=?1
+            UNION ALL SELECT q.topic_id,q.topic FROM exam_session_questions q JOIN exam_sessions s USING(session_id)
+            WHERE s.bank_version=?1 AND s.license=?2 AND s.procedure=?3
+        ) GROUP BY topic_id ORDER BY topic_id")?;
+        let mut choices = vec!["Tutti".into()];
+        let mut topic_id = None;
+        let selected = ui.get_stats_topic();
+        for row in stmt.query_map(
+            params![
+                selected_version.as_str(),
+                license.as_str(),
+                procedure.as_str()
+            ],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+        )? {
+            let (id, name) = row?;
+            let label = SharedString::from(format!("{id} · {name}"));
+            if label == selected {
+                topic_id = Some(id);
+            }
+            choices.push(label);
+        }
+        ui.set_stats_topics(model(choices));
+        ui.set_stats_topic(if topic_id.is_some() {
+            selected
+        } else {
+            "Tutti".into()
+        });
         let series = ui.get_stats_series();
         let strategy = match series.as_str() {
             "Casuale" => Some("random"),
@@ -422,16 +476,10 @@ impl Controller {
             "Intelligente" => Some("intelligent"),
             _ => None,
         };
-        let topic_id = ui
-            .get_stats_topics()
-            .iter()
-            .position(|v| v == ui.get_stats_topic())
-            .and_then(|i| i.checked_sub(1))
-            .and_then(|i| self.topic_ids.get(i).copied());
         let filters = statistics::Filters {
             license: Some(ui.get_license().to_string()),
             procedure: Some(ui.get_procedure().to_string()),
-            bank_version: Some(self.version.clone()),
+            bank_version: Some(selected_version.to_string()),
             kind: match series.as_str() {
                 "Tutte" => None,
                 "Ufficiale" => Some("official".into()),

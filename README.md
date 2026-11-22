@@ -70,6 +70,8 @@ cargo apk2 build --lib --features gui --target aarch64-linux-android
 
 Con **Interrompi e salva** puoi riprendere dallo stesso quesito. Le omesse contano come errori per l'esito. Alla consegna di una personalizzata, ogni risposta data aggiorna una sola volta il ripasso. Riapri i risultati da **Statistiche e risultati**, dove le prove ufficiali e ciascuna strategia personalizzata hanno serie distinte.
 
+Per AM e A/B conseguimento la simulazione ufficiale usa le quote per argomento dell'edizione supportata. Per la revisione AM e A/B è disponibile la simulazione personalizzata. La modalità ufficiale di revisione richiede una distribuzione per argomento verificata.
+
 ## Versioni aggiornate e controlli
 
 Usiamo versioni **stabili** e recenti, con proposte quotidiane di aggiornamento

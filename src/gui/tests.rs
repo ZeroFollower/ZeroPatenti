@@ -112,15 +112,99 @@ fn slint_callbacks_import_pause_reopen_submit_and_filter_results() -> Result<()>
     assert!(ui.get_details().contains(&second));
     assert!(ui.get_subtitle().contains("Segnaletica"));
     ui.invoke_act("home".into());
+    // In Italy this UTC timestamp belongs to 2 January locally.
+    let submitted = 1_767_310_200;
+    let local_date = Local.timestamp_opt(submitted, 0).single().unwrap();
+    {
+        let c = state.borrow();
+        c.db.execute(
+            "UPDATE exam_sessions SET updated_at=? WHERE session_id=?",
+            params![submitted, saved.key.as_str()],
+        )?;
+        c.db.execute(
+            "UPDATE exam_results SET submitted_at=? WHERE session_id=?",
+            params![submitted, saved.key.as_str()],
+        )?;
+    }
+    ui.set_since(local_date.format("%Y-%m-%d").to_string().into());
+    ui.set_until(ui.get_since());
     ui.invoke_act("stats".into());
     assert_eq!(ui.get_history().row_count(), 1, "{}", ui.get_notice());
     assert_eq!(ui.get_history().row_data(0).unwrap().key, saved.key);
+    let trend_date = format!("Andamento recente\n{}", local_date.format("%d/%m/%Y"));
+    assert!(
+        ui.get_details().contains(&trend_date),
+        "{}",
+        ui.get_details()
+    );
+    // A replaced catalog edition still has a frozen correction and topic list.
+    state.borrow().db.execute(
+        "UPDATE exam_sessions SET bank_version='AB-ARCHIVIO' WHERE session_id=?",
+        [saved.key.as_str()],
+    )?;
+    ui.invoke_act("stats".into());
+    assert_eq!(ui.get_history().row_count(), 0);
+    assert!(ui.get_stats_banks().iter().any(|v| v == "AB-ARCHIVIO"));
+    ui.set_stats_bank("AB-ARCHIVIO".into());
+    ui.invoke_act("stats".into());
+    assert_eq!(ui.get_history().row_count(), 1);
+    assert!(
+        ui.get_stats_topics()
+            .iter()
+            .any(|v| v.contains("Segnaletica"))
+    );
     ui.invoke_open_entry("result".into(), saved.key);
     let logs: i64 = state
         .borrow()
         .db
         .query_row("SELECT count(*) FROM review_log", [], |r| r.get(0))?;
     assert_eq!(logs, 1);
+    drop(timer);
+    drop(ui);
+    drop(state);
+    std::fs::remove_dir_all(dir)?;
+    Ok(())
+}
+
+#[test]
+fn exam_grid_tracks_answers_across_page_boundaries() -> Result<()> {
+    slint::platform::set_platform(Box::new(TestPlatform))?;
+    let dir = std::env::temp_dir().join(format!("zp-grid-{}-{}", std::process::id(), now()));
+    std::fs::create_dir(&dir)?;
+    let db = dir.join("test.sqlite3");
+    let csv = dir.join("questions.csv");
+    let mut questions =
+        String::from("id,quesito_id,argomento_id,argomento_nome,testo,risposta,figura\n");
+    for n in 1..=27 {
+        questions.push_str(&format!(
+            "{n},10,1,Segnaletica,Domanda di prova {n},VERO,\n"
+        ));
+    }
+    std::fs::write(&csv, questions)?;
+    let mut c = Controller::open(&db)?;
+    storage::import_file(&mut c.db, "AB-7020", &csv)?;
+    crate::exam::catalog::trust_fixture(&c.db, "B", "conseguimento")?;
+    let (ui, state, timer) = bind(c)?;
+    ui.set_count(27);
+    ui.set_timed(false);
+    ui.invoke_act("start".into());
+    assert_eq!(ui.get_page(), "exam", "{}", ui.get_notice());
+    assert_eq!(ui.get_grid().row_count(), 25);
+    assert_eq!(ui.get_grid().row_data(24).unwrap(), "25");
+
+    ui.invoke_jump(24);
+    ui.invoke_act("true".into());
+    assert_eq!(ui.get_grid().row_data(24).unwrap(), "25 ✓");
+    ui.invoke_jump(25);
+    assert_eq!(ui.get_grid().row_count(), 2);
+    assert_eq!(ui.get_grid().row_data(0).unwrap(), "26");
+    ui.invoke_act("false".into());
+    assert_eq!(ui.get_grid().row_data(0).unwrap(), "26 ✓");
+    ui.invoke_jump(24);
+    assert_eq!(ui.get_grid().row_data(24).unwrap(), "25 ✓");
+    ui.invoke_jump(25);
+    ui.invoke_act("clear".into());
+    assert_eq!(ui.get_grid().row_data(0).unwrap(), "26");
     drop(timer);
     drop(ui);
     drop(state);

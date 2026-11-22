@@ -1,7 +1,8 @@
 use super::result::{Correction, Question};
 use anyhow::{Result, ensure};
+use chrono::{Local, TimeZone};
 use fsrs::{FSRS, MemoryState};
-use rusqlite::{Connection, named_params};
+use rusqlite::{Connection, named_params, params};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Display, Formatter, Write};
@@ -343,7 +344,7 @@ pub struct Memory {
 /// current card state, independent of the exam strategy and period.
 fn memory(db: &Connection, f: &Filters, now: i64) -> Result<Memory> {
     let restrict = f.license.is_some() || f.procedure.is_some();
-    let banks: Vec<String> = crate::catalog::load()?
+    let mut banks: Vec<String> = crate::catalog::load()?
         .listati
         .into_iter()
         .filter(|b| {
@@ -356,6 +357,14 @@ fn memory(db: &Connection, f: &Filters, now: i64) -> Result<Memory> {
         })
         .map(|b| b.versione)
         .collect();
+    if restrict {
+        let mut previous=db.prepare("SELECT DISTINCT bank_version FROM exam_sessions WHERE (?1 IS NULL OR license=?1 COLLATE NOCASE) AND (?2 IS NULL OR procedure=?2 COLLATE NOCASE)")?;
+        for bank in
+            previous.query_map(params![f.license, f.procedure], |r| r.get::<_, String>(0))?
+        {
+            banks.push(bank?);
+        }
+    }
     let banks = serde_json::to_string(&banks)?;
     let scope = "(:version IS NULL OR q.source_version=:version)
         AND (:topic IS NULL OR q.topic_id=:topic)
@@ -605,7 +614,9 @@ impl Dashboard {
             }
             out.push_str("\nAndamento recente");
             for a in s.history.iter().rev().take(8) {
-                let date = chrono::DateTime::from_timestamp(a.at, 0)
+                let date = Local
+                    .timestamp_opt(a.at, 0)
+                    .single()
                     .map(|d| d.format("%d/%m/%Y").to_string())
                     .unwrap_or_default();
                 let _ = write!(
