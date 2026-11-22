@@ -14,8 +14,20 @@ use serde::Deserialize;
 
 mod catalog;
 
-const AGAIN_DELAY_SECONDS: i64 = 10 * 60;
 const SECONDS_PER_DAY: f32 = 86_400.0;
+
+/// Replica la convenzione di pianificazione dell'esempio ufficiale fsrs-rs:
+/// arrotondamento ai giorni e minimo di un giorno, per ogni rating.
+/// Non introduce ritardi fissi applicativi per Again.
+fn due_from_fsrs_interval(reviewed_at: i64, interval_days: f32) -> Result<i64> {
+    ensure!(interval_days.is_finite() && interval_days >= 0.0,
+        "Intervallo FSRS non valido: {interval_days}");
+    let seconds = (interval_days.round().max(1.0) as i64)
+        .checked_mul(86_400)
+        .context("Intervallo FSRS troppo grande")?;
+    reviewed_at.checked_add(seconds)
+        .context("Scadenza FSRS fuori intervallo")
+}
 
 #[derive(Parser)]
 #[command(name = "zeropatenti", about = "Quiz per le patenti italiane") ]
@@ -564,12 +576,7 @@ fn study(conn: &mut Connection, version: &str, limit: usize, retention: f32, sel
             4 => next.easy,
             _ => unreachable!(),
         };
-        let due_at = if rating == 1 {
-            now + AGAIN_DELAY_SECONDS // passo di riapprendimento applicativo
-        } else {
-            let seconds = (selected.interval.max(1.0) * SECONDS_PER_DAY).round() as i64;
-            now + seconds
-        };
+        let due_at = due_from_fsrs_interval(now, selected.interval)?;
         let tx = conn.transaction()?;
         tx.execute(
             "INSERT INTO card_state (
@@ -741,6 +748,33 @@ mod tests {
         assert!(states.good.memory.stability_fast.is_finite());
         assert!(states.good.memory.difficulty.is_finite());
         assert!(states.good.interval > 0.0);
+    }
+
+    #[test]
+    fn again_uses_fsrs_rs_interval_instead_of_fixed_ten_minutes() {
+        let now = 1_700_000_000i64;
+        let fsrs = FSRS::default();
+        let next = fsrs.next_states_with_elapsed_days(None, 0.90, 0.0).unwrap();
+        let expected = now + (next.again.interval.round().max(1.0) as i64) * 86_400;
+        assert_eq!(due_from_fsrs_interval(now, next.again.interval).unwrap(), expected);
+        assert!(expected >= now + 86_400);
+    }
+
+    #[test]
+    fn all_fsrs_ratings_obey_upstream_day_rounding() {
+        let now = 1_700_000_000i64;
+        let fsrs = FSRS::default();
+        let next = fsrs.next_states_with_elapsed_days(None, 0.90, 0.0).unwrap();
+        for review in [next.again, next.hard, next.good, next.easy] {
+            let expected = now + (review.interval.round().max(1.0) as i64) * 86_400;
+            assert_eq!(due_from_fsrs_interval(now, review.interval).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn fsrs_due_rejects_invalid_intervals() {
+        assert!(due_from_fsrs_interval(1_700_000_000, f32::NAN).is_err());
+        assert!(due_from_fsrs_interval(1_700_000_000, -1.0).is_err());
     }
 
     #[test]
