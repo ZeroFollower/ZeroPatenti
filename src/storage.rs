@@ -22,7 +22,15 @@ pub struct SourceQuestion {
     pub testo: String,
     pub risposta: bool,
     pub figura: Option<String>,
+    pub spiegazione: Option<String>,
+    pub approfondimento: Option<String>,
+    pub fonte_spiegazione: Option<String>,
 }
+
+const STUDY_NOTES_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS study_notes (
+        card_id TEXT PRIMARY KEY NOT NULL REFERENCES questions(card_id) ON DELETE CASCADE,
+        brief TEXT, detail TEXT, attribution TEXT
+    );";
 
 #[derive(Debug, Deserialize)]
 struct CsvQuestion {
@@ -34,6 +42,9 @@ struct CsvQuestion {
     risposta: String,
     #[serde(default)]
     figura: Option<String>,
+    spiegazione: Option<String>,
+    approfondimento: Option<String>,
+    fonte_spiegazione: Option<String>,
 }
 
 /// Solo file normalizzati verificati: i PDF ministeriali richiedono un estrattore
@@ -83,6 +94,8 @@ pub fn init_database(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_questions_version
           ON questions(source_version);
+        CREATE INDEX IF NOT EXISTS idx_questions_group
+          ON questions(source_version,topic_id,group_id);
         CREATE TABLE IF NOT EXISTS study_card_views (
             card_id TEXT PRIMARY KEY NOT NULL REFERENCES questions(card_id) ON DELETE CASCADE,
             first_seen_at INTEGER NOT NULL
@@ -111,6 +124,7 @@ pub fn init_database(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_review_card ON review_log(card_id, reviewed_at);",
     )?;
+    conn.execute_batch(STUDY_NOTES_SCHEMA)?;
     crate::exam::catalog::migrate(conn)?;
     crate::exam::store::migrate(conn)?;
     Ok(())
@@ -152,6 +166,8 @@ pub(crate) fn import_questions_in(
 ) -> Result<usize> {
     ensure!(!version.trim().is_empty(), "Versione mancante");
     ensure!(!questions.is_empty(), "Non ci sono domande da importare");
+    // CLI callers may import into an existing v0.1 database before opening the GUI.
+    tx.execute_batch(STUDY_NOTES_SCHEMA)?;
     let mut ids = HashSet::new();
     for q in &questions {
         ensure!(q.id > 0, "ID non valido: {}", q.id);
@@ -173,6 +189,9 @@ pub(crate) fn import_questions_in(
                 correct_answer=excluded.correct_answer,
                 image_path=excluded.image_path",
         )?;
+        let mut notes = tx.prepare(
+            "INSERT OR REPLACE INTO study_notes(card_id,brief,detail,attribution) VALUES (?1,?2,?3,?4)"
+        )?;
         for q in &questions {
             // Non associare progressi FSRS a una domanda modificata sotto la stessa versione.
             let card_id = format!("{}:{}", version, q.id);
@@ -183,9 +202,9 @@ pub(crate) fn import_questions_in(
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .optional()?;
-            if let Some((old_text, old_answer)) = old {
+            if let Some((ref old_text, old_answer)) = old {
                 ensure!(
-                    old_text == q.testo && old_answer == q.risposta as i64,
+                    old_text == &q.testo && old_answer == q.risposta as i64,
                     "Domanda {} cambiata sotto versione {}: importa con una NUOVA versione",
                     q.id,
                     version
@@ -202,6 +221,26 @@ pub(crate) fn import_questions_in(
                 q.risposta as i64,
                 q.figura.as_deref(),
             ])?;
+            let brief = q
+                .spiegazione
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let detail = q
+                .approfondimento
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            if brief.is_some() || detail.is_some() {
+                notes.execute(params![
+                    card_id,
+                    brief,
+                    detail,
+                    q.fonte_spiegazione.as_deref().map(str::trim)
+                ])?;
+            } else if old.is_some() {
+                tx.execute("DELETE FROM study_notes WHERE card_id=?1", [&card_id])?;
+            }
         }
     }
     Ok(questions.len())
@@ -249,7 +288,25 @@ pub fn read_json(file: &Path) -> Result<Vec<SourceQuestion>> {
 }
 
 pub fn read_csv(file: &Path) -> Result<Vec<SourceQuestion>> {
-    let mut reader = csv::Reader::from_path(file)?;
+    parse_csv(File::open(file)?)
+}
+
+#[cfg(feature = "gui")]
+pub(crate) fn parse_package_questions(file: &Path, bytes: &[u8]) -> Result<Vec<SourceQuestion>> {
+    match file
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("csv") => parse_csv(bytes),
+        Some("json") => Ok(serde_json::from_slice::<SourceList>(bytes)?.domande),
+        _ => bail!("Formato non supportato: scegli un CSV o JSON normalizzato"),
+    }
+}
+
+fn parse_csv(input: impl std::io::Read) -> Result<Vec<SourceQuestion>> {
+    let mut reader = csv::Reader::from_reader(input);
     let mut questions = Vec::new();
     for row in reader.deserialize::<CsvQuestion>() {
         let row = row?;
@@ -261,6 +318,9 @@ pub fn read_csv(file: &Path) -> Result<Vec<SourceQuestion>> {
             testo: row.testo,
             risposta: parse_truth(&row.risposta)?,
             figura: row.figura.filter(|s| !s.trim().is_empty()),
+            spiegazione: row.spiegazione,
+            approfondimento: row.approfondimento,
+            fonte_spiegazione: row.fonte_spiegazione,
         });
     }
     Ok(questions)

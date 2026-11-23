@@ -1,0 +1,182 @@
+import { ComboBox } from "std-widgets.slint";
+import { ButtonSurface, Icon, Theme } from "theme.slint";
+
+component Wordmark inherits Rectangle {
+    in property <bool> small;
+    width: root.small ? 127px : 170px;
+    height: root.small ? 46px : 59px;
+    accessible-role: text;
+    accessible-label: "ZeroPatenti Simple";
+    Text {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: root.small ? 29px : 37px;
+        text: "ZeroPatenti";
+        font-size: root.small ? 22px : 29px;
+        horizontal-alignment: left;
+        vertical-alignment: center;
+        font-weight: 800;
+        letter-spacing: -1.3px;
+        color: Theme.text;
+        accessible-role: none;
+    }
+    Image {
+        x: 1px;
+        y: root.small ? 31px : 40px;
+        width: root.small ? 52px : 69px;
+        height: root.small ? 9px : 12px;
+        source: @image-url("icons/wave.svg");
+        image-fit: contain;
+        accessible-role: none;
+    }
+    Text {
+        x: root.small ? 59px : 78px;
+        y: root.small ? 28px : 36px;
+        width: root.small ? 68px : 90px;
+        height: root.small ? 17px : 22px;
+        vertical-alignment: center;
+        text: "SIMPLE";
+        font-size: root.small ? 12px : 16px;
+        letter-spacing: 1.5px;
+        color: #c5dfed;
+        accessible-role: none;
+    }
+}
+
+component NavItem inherits ButtonSurface {
+    in property <string> label;
+    in property <string> glyph;
+    in property <bool> active;
+    accessible-label: root.label;
+    height: 44px;
+    border-radius: 8px;
+    border-width: root.focused ? 2px : 0px;
+    border-color: Theme.accent;
+    background: root.held ? #205953 : root.active ?
+        @linear-gradient(90deg, #185753 0%, #19504f 100%) :
+        root.hovered ? #203447 : transparent;
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 8px;
+        spacing: 14px;
+        Rectangle {
+            width: 24px;
+            Icon {
+                width: 24px;
+                height: 24px;
+                y: (parent.height - self.height) / 2;
+                name: root.glyph;
+                color: root.active ? #8cfff0 : root.enabled ? #e6eff7 : #8499aa;
+            }
+        }
+        Text {
+            text: root.label;
+            vertical-alignment: center;
+            font-size: 15px;
+            font-weight: root.active ? 700 : 550;
+            color: root.enabled || root.active ? Theme.text : #9aafbe;
+            accessible-role: none;
+        }
+    }
+}
+
+struct Destination { label: string, page: string, glyph: string }
+
+export component Sidebar inherits Rectangle {
+    in property <string> page: "home";
+    in property <bool> compact;
+    callback navigate(string);
+    private property <[Destination]> destinations: [
+        { label: "Dashboard", page: "home", glyph: "home" },
+        { label: "Studio e ripasso", page: "study-setup", glyph: "book" },
+        { label: "Simulazioni", page: "simulation", glyph: "clipboard" },
+        { label: "Banche dati", page: "import", glyph: "database" },
+        { label: "Statistiche", page: "stats", glyph: "chart" },
+    ];
+    private property <string> active-section:
+        root.page == "exam" || root.page == "paused" ? "simulation" :
+        root.page == "study" ? "study-setup" :
+        root.page == "result" ? "stats" : root.page;
+    min-width: root.compact ? 270px : 204px;
+    preferred-width: root.compact ? 320px : 216px;
+    preferred-height: root.compact ? 58px : 550px;
+    background: @linear-gradient(145deg, Theme.sidebar 0%, #0d1724 100%);
+
+    if !root.compact: VerticalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 18px;
+        padding-bottom: 16px;
+        spacing: 6px;
+        Rectangle {
+            height: 77px;
+            Wordmark { x: 14px; y: 0px; }
+        }
+        for entry in root.destinations: NavItem {
+            label: entry.label;
+            glyph: entry.glyph;
+            enabled: root.page != "exam";
+            active: entry.page == root.active-section;
+            clicked => { root.navigate(entry.page); }
+        }
+        Rectangle {
+            height: 17px;
+            Rectangle {
+                x: 14px;
+                y: 6px;
+                height: 1px;
+                width: parent.width - 28px;
+                background: #445a6e;
+            }
+        }
+        Rectangle { vertical-stretch: 1; }
+        NavItem {
+            label: "Impostazioni";
+            glyph: "settings";
+            enabled: root.page != "exam";
+            active: root.active-section == "settings";
+            clicked => { root.navigate("settings"); }
+        }
+    }
+    if !root.compact: Rectangle {
+        x: parent.width - 1px;
+        width: 1px;
+        background: #243445;
+    }
+    if root.compact: HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 12px;
+        spacing: 10px;
+        Rectangle {
+            horizontal-stretch: 1;
+            min-width: 119px;
+            Wordmark { small: true; x: 0px; y: (parent.height - self.height) / 2; }
+        }
+        Rectangle {
+            min-width: 113px;
+            preferred-width: 181px;
+            max-width: 181px;
+            ComboBox {
+                private property <int> active-index: root.active-section == "study-setup" ? 1 :
+                    root.active-section == "simulation" ? 2 : root.active-section == "import" ? 3 :
+                    root.active-section == "stats" ? 4 : root.active-section == "settings" ? 5 : 0;
+                changed active-index => { self.current-index = self.active-index; }
+                y: (parent.height - self.height) / 2;
+                width: parent.width;
+                height: 38px;
+                accessible-label: "Navigazione";
+                enabled: root.page != "exam";
+                model: ["Dashboard", "Studio e ripasso", "Simulazioni", "Banche dati", "Statistiche", "Impostazioni"];
+                current-index: self.active-index;
+                selected(_) => {
+                    if self.current-index == 5 {
+                        root.navigate("settings");
+                    } else {
+                        root.navigate(root.destinations[self.current-index].page);
+                    }
+                }
+            }
+        }
+    }
+}

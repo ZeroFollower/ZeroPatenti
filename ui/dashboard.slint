@@ -1,0 +1,324 @@
+import { ActionButton, ButtonSurface, Icon, Theme } from "theme.slint";
+
+component Surface inherits Rectangle {
+    border-radius: 11px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: @linear-gradient(157deg, Theme.panel-light, Theme.panel);
+}
+
+component IconTile inherits Rectangle {
+    in property <string> symbol;
+    in property <bool> blue;
+    border-radius: 9px;
+    background: root.blue
+        ? @linear-gradient(145deg, #23577b, #173b57)
+        : @linear-gradient(145deg, #236963, #184744);
+    Icon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: parent.width * 0.65;
+        height: self.width;
+        name: root.symbol;
+        color: root.blue ? #62d8ff : #7df9df;
+    }
+}
+
+component TodayCard inherits Surface {
+    in property <string> study-goal;
+    in property <bool> goal-complete;
+    callback start;
+    callback start-continuous;
+    HorizontalLayout {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        padding: root.width < 350px ? 12px : 18px;
+        spacing: root.width < 350px ? 10px : 18px;
+        Image {
+            width: clamp(root.width * 0.255, 62px, 126px);
+            source: @image-url("icons/hero-book.svg");
+            image-fit: contain;
+            accessible-role: none;
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 7px;
+            Text {
+                text: "Il tuo studio di oggi";
+                font-size: root.width < 350px ? 19px : 22px;
+                font-weight: 700;
+                color: #f5f9ff;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.study-goal == "" ? "Un percorso personalizzato tra ripassi scaduti e nuove domande." : root.study-goal;
+                font-size: 14px;
+                color: #dfebf5;
+                wrap: word-wrap;
+            }
+            ActionButton {
+                text: root.goal-complete ? "Obiettivo completato" : "Inizia a studiare";
+                enabled: !root.goal-complete;
+                icon: "play";
+                primary: true;
+                horizontal-stretch: 1;
+                clicked => { root.start(); }
+            }
+            ActionButton {
+                text: "Studio continuo";
+                icon: "book";
+                clicked => { root.start-continuous(); }
+            }
+        }
+    }
+}
+
+component CountCard inherits Surface {
+    in property <int> number;
+    in property <string> caption;
+    in property <string> symbol;
+    in property <bool> blue;
+    HorizontalLayout {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        padding-left: root.width < 180px ? 9px : 14px;
+        padding-right: root.width < 180px ? 8px : 12px;
+        spacing: root.width < 180px ? 8px : 14px;
+        Rectangle {
+            width: root.width < 180px ? 32px : 44px;
+            IconTile {
+                width: parent.width;
+                height: self.width;
+                y: (parent.height - self.height) / 2;
+                symbol: root.symbol;
+                blue: root.blue;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Text {
+                text: root.number;
+                color: #f5f9ff;
+                font-size: 26px;
+                font-weight: 750;
+            }
+            Text {
+                text: root.caption;
+                color: #e6eff8;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
+component ProgressCard inherits Surface {
+    in property <string> heading;
+    in property <string> caption;
+    in property <int> percent;
+    in property <string> symbol;
+    in property <bool> blue;
+    VerticalLayout {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        padding-left: 16px;
+        padding-right: 16px;
+        alignment: center;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 12px;
+            Rectangle {
+                width: 37px;
+                IconTile {
+                    y: 3px;
+                    height: 37px;
+                    symbol: root.symbol;
+                    blue: root.blue;
+                }
+            }
+            VerticalLayout {
+                Text {
+                    text: root.heading;
+                    color: #f1f6fd;
+                    font-size: 14px;
+                    font-weight: 650;
+                }
+                Text {
+                    text: root.percent < 0 ? "—" : root.percent + " %";
+                    color: #f5f9ff;
+                    font-size: 24px;
+                    font-weight: 750;
+                }
+            }
+        }
+        Rectangle {
+            height: 12px;
+            border-radius: 6px;
+            background: #3a536e;
+            if root.percent > 0: Rectangle {
+                x: 0px;
+                y: 0px;
+                width: parent.width * clamp(root.percent, 0, 100) / 100;
+                height: parent.height;
+                border-radius: parent.border-radius;
+                background: root.blue
+                    ? @linear-gradient(180deg, #58b8ff, #339cea)
+                    : @linear-gradient(180deg, #51debb, #25b898);
+            }
+        }
+        Text {
+            text: root.caption;
+            color: #d1e1ed;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+component Shortcut inherits ButtonSurface {
+    in property <string> caption;
+    in property <string> symbol;
+    accessible-label: root.caption;
+    border-radius: 11px;
+    border-width: 1px;
+    border-color: root.focused ? #60e5d8 : root.hovered ? #52819a : Theme.border;
+    background: root.held ? #173847 : root.hovered
+        ? @linear-gradient(157deg, #2b475c, #1b3447)
+        : @linear-gradient(157deg, Theme.panel-light, Theme.panel);
+    VerticalLayout {
+        alignment: center;
+        spacing: 5px;
+        Rectangle {
+            height: 29px;
+            Icon {
+                x: (parent.width - self.width) / 2;
+                width: 29px;
+                height: 29px;
+                name: root.symbol;
+                color: #68e0ee;
+            }
+        }
+        Text {
+            text: root.caption;
+            height: 35px;
+            color: #f1f6fd;
+            font-size: 14px;
+            font-weight: 650;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+}
+
+export component Dashboard inherits VerticalLayout {
+    in property <string> exam-countdown;
+    in property <string> study-goal;
+    in property <bool> compact;
+    in property <int> total;
+    in property <int> studied;
+    in property <int> due;
+    in property <int> recommended;
+    in property <int> memory: -1;
+    in property <string> license;
+    callback navigate(string);
+    private property <bool> stacked-hero: root.width < 540px;
+    private property <bool> stacked-progress: root.width < 520px;
+    private property <bool> paired-shortcuts: root.width < 520px;
+    private property <length> gap: 12px;
+    alignment: start;
+    spacing: root.gap;
+
+    VerticalLayout {
+        spacing: 1px;
+        Text {
+            text: "Dashboard";
+            color: #f7faff;
+            font-size: root.compact ? 26px : 29px;
+            font-weight: 750;
+        }
+        Text {
+            text: "Patente " + root.license + "  ·  Preparazione teorica";
+            color: #dce8f2;
+            font-size: 15px;
+        }
+        if root.exam-countdown != "": Text {
+            text: root.exam-countdown;
+            color: Theme.cyan;
+            font-size: 14px;
+            wrap: word-wrap;
+        }
+    }
+    Rectangle {
+        private property <length> hero-height: root.stacked-hero ? (root.width < 350px ? 223px : 205px) : clamp(root.width * 0.246 + 49px, 215px, 261px);
+        height: self.hero-height + (root.stacked-hero ? root.gap + 89px : 0px);
+        hero := TodayCard {
+            study-goal: root.study-goal;
+            goal-complete: root.total > 0 && root.study-goal != "" && root.due + root.recommended == 0;
+            x: 0px;
+            y: 0px;
+            width: root.stacked-hero ? parent.width : (parent.width - root.gap) * 0.65;
+            height: parent.hero-height;
+            start => { root.navigate("study-start"); }
+            start-continuous => { root.navigate("study-continuous"); }
+        }
+        for item[i] in [
+            {number: root.due, caption: "Ripassi scaduti", symbol: "refresh", blue: true},
+            {number: root.recommended, caption: "Nuove domande consigliate", symbol: "plus", blue: false},
+        ]: CountCard {
+            x: root.stacked-hero ? i * (self.width + root.gap) : hero.width + root.gap;
+            y: root.stacked-hero ? hero.height + root.gap : i * (self.height + 8px);
+            width: root.stacked-hero ? (parent.width - root.gap) / 2 : parent.width - hero.width - root.gap;
+            height: root.stacked-hero ? 89px : (hero.height - 8px) / 2;
+            number: item.number;
+            caption: item.caption;
+            symbol: item.symbol;
+            blue: item.blue;
+        }
+    }
+    Rectangle {
+        private property <length> card-height: clamp(root.width * 0.173, 122px, 152px);
+        height: root.stacked-progress ? self.card-height * 2 + root.gap : self.card-height;
+        for item[i] in [
+            {heading: "Copertura del programma", symbol: "book", blue: false,
+             percent: root.total == 0 ? -1 : round(100 * root.studied / root.total),
+             caption: "Domande già affrontate: " + root.studied + " su " + root.total + "."},
+            {heading: "Memoria stimata", symbol: "brain", blue: true, percent: root.memory,
+             caption: root.memory < 0 ? "La stima sarà disponibile dopo lo studio." : "Probabilità media di ricordare le domande studiate."},
+        ]: ProgressCard {
+            x: root.stacked-progress ? 0px : i * (self.width + root.gap);
+            y: root.stacked-progress ? i * (self.height + root.gap) : 0px;
+            width: root.stacked-progress ? parent.width : (parent.width - root.gap) / 2;
+            height: parent.card-height;
+            heading: item.heading;
+            caption: item.caption;
+            percent: item.percent;
+            symbol: item.symbol;
+            blue: item.blue;
+        }
+    }
+    Rectangle {
+        private property <length> shortcut-height: clamp(root.width * 0.125, 82px, 105px);
+        height: root.paired-shortcuts ? self.shortcut-height * 2 + root.gap : self.shortcut-height;
+        for item[i] in [
+            {caption: "Ripasso", symbol: "refresh", action: "review"},
+            {caption: "Simulazione\nufficiale", symbol: "clipboard", action: "official"},
+            {caption: "Simulazione\npersonalizzata", symbol: "sliders", action: "custom"},
+            {caption: "Statistiche", symbol: "chart", action: "stats"},
+        ]: Shortcut {
+            width: root.paired-shortcuts ? (parent.width - root.gap) / 2 : (parent.width - 3 * root.gap) / 4;
+            height: parent.shortcut-height;
+            x: (root.paired-shortcuts ? mod(i, 2) : i) * (self.width + root.gap);
+            y: root.paired-shortcuts ? floor(i / 2) * (self.height + root.gap) : 0px;
+            caption: item.caption;
+            symbol: item.symbol;
+            clicked => { root.navigate(item.action); }
+        }
+    }
+}

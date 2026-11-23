@@ -1,15 +1,17 @@
 use std::{
     cell::RefCell,
-    collections::VecDeque,
     path::{Path, PathBuf},
     rc::Rc,
     time::Duration,
 };
 
 use anyhow::{Context, Result, bail, ensure};
-use chrono::{Local, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use slint::{ComponentHandle, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
+
+mod banks;
+mod profile;
 
 use crate::{
     catalog,
@@ -66,18 +68,56 @@ fn date_bound(text: &str, end: bool) -> Result<Option<i64>> {
     ))
 }
 
+const QUICK_STUDY_LIMIT: usize = 20;
+
+struct StudyItem {
+    card: StudyCard,
+    answer: Option<bool>,
+    rating: Option<u8>,
+}
+
+impl StudyItem {
+    fn new(card: StudyCard) -> Self {
+        Self {
+            card,
+            answer: None,
+            rating: None,
+        }
+    }
+}
+
+struct ContinuousStudy {
+    topics: Vec<i64>,
+    reviews_only: bool,
+}
+
+fn no_scheduled_cards(reviews_only: bool) -> &'static str {
+    if reviews_only {
+        "Nessun ripasso in scadenza per gli argomenti selezionati."
+    } else {
+        "Hai studiato tutte le domande di questi argomenti. Potrai continuare al prossimo ripasso."
+    }
+}
+
 struct Controller {
     db: Connection,
+    pending_import: Option<banks::ImportSelection>,
+    pending_archive: Option<Vec<banks::ArchivedEdition>>,
     _instance: std::fs::File,
     #[cfg(any(target_os = "android", test))]
     staged_media: PathBuf,
     topic_ids: Vec<i64>,
     version: String,
+    dashboard_day: Option<NaiveDate>,
+    next_due_at: Option<i64>,
+    quick_study_count: usize,
     session: Option<SessionView>,
     clock: Option<ActiveClock>,
     pending_pause: Option<(i64, i64)>,
-    study: VecDeque<StudyCard>,
-    study_answer: Option<bool>,
+    study: Vec<StudyItem>,
+    continuous: Option<ContinuousStudy>,
+    study_index: usize,
+    study_furthest: usize,
 }
 
 impl Controller {
@@ -97,39 +137,144 @@ impl Controller {
             .context("Questo database è già aperto in un'altra finestra ZeroPatenti")?;
         db.busy_timeout(Duration::from_secs(5))?;
         storage::init_database(&db)?;
+        banks::migrate(&db)?;
+        profile::initialize(&db)?;
         db.execute_batch("CREATE TABLE IF NOT EXISTS gui_media_roots(bank_version TEXT PRIMARY KEY, directory TEXT NOT NULL);")?;
         store::recover(&mut db, now())?;
         Ok(Self {
             db,
+            pending_import: None,
+            pending_archive: None,
             _instance: instance,
             #[cfg(any(target_os = "android", test))]
             staged_media: path.with_file_name("bank-media"),
             topic_ids: vec![],
             version: String::new(),
+            dashboard_day: None,
+            next_due_at: None,
+            quick_study_count: QUICK_STUDY_LIMIT,
             session: None,
             clock: None,
             pending_pause: None,
-            study: VecDeque::new(),
-            study_answer: None,
+            study: Vec::new(),
+            continuous: None,
+            study_index: 0,
+            study_furthest: 0,
         })
+    }
+
+    fn refresh_dashboard_if_needed(
+        &mut self,
+        ui: &AppWindow,
+        current: DateTime<Local>,
+    ) -> Result<()> {
+        if self.dashboard_day != Some(current.date_naive())
+            || self
+                .next_due_at
+                .is_some_and(|due| due <= current.timestamp())
+        {
+            self.refresh_dashboard(ui, current)?;
+        }
+        Ok(())
+    }
+
+    fn refresh_dashboard(&mut self, ui: &AppWindow, current: DateTime<Local>) -> Result<()> {
+        let today = current.date_naive();
+        let exam = profile::exam_date(&self.db, &ui.get_license(), &ui.get_procedure())?;
+        let mut filters = statistics::Filters {
+            bank_version: Some(self.version.clone()),
+            ..Default::default()
+        };
+        let scheduled = exam.filter(|date| *date >= today);
+        if scheduled.is_some() {
+            filters.from = date_bound(&today.to_string(), false)?;
+            filters.until = Some(current.timestamp() + 1);
+        }
+        let progress = statistics::memory(&self.db, &filters, current.timestamp())?;
+        let new = progress.total - progress.studied;
+        let (recommended, goal) = if let Some(date) = scheduled {
+            let days = (date - today).num_days().max(1) as usize;
+            // Rebuild the morning's unseen pool so the goal stays stable as cards are graded.
+            let completed = progress.reviews - progress.repeat_reviews;
+            let target = (new + completed).div_ceil(days);
+            let remaining = target.saturating_sub(completed).min(new);
+            self.quick_study_count = progress.due + remaining;
+            let goal = if progress.total == 0 {
+                "Importa il listato per calcolare l’obiettivo giornaliero.".to_owned()
+            } else if target == 0 {
+                "Hai già studiato tutte le domande del listato.".to_owned()
+            } else if completed > target {
+                format!("Obiettivo raggiunto · {completed} nuove domande completate oggi.")
+            } else {
+                format!("Obiettivo di oggi · {completed} su {target} nuove domande.")
+            };
+            (remaining, goal)
+        } else {
+            self.quick_study_count = QUICK_STUDY_LIMIT;
+            (
+                new.min(QUICK_STUDY_LIMIT.saturating_sub(progress.due)),
+                String::new(),
+            )
+        };
+        let date_text = exam
+            .map(|date| date.format("%d/%m/%Y").to_string())
+            .unwrap_or_default();
+        ui.set_exam_date_input(date_text.as_str().into());
+        ui.set_exam_date(date_text.into());
+        ui.set_exam_countdown(
+            exam.map(|date| profile::countdown(date, today))
+                .unwrap_or_default()
+                .into(),
+        );
+        ui.set_study_goal(goal.into());
+        ui.set_total(i32::try_from(progress.total)?);
+        ui.set_studied(i32::try_from(progress.seen)?);
+        ui.set_due(i32::try_from(progress.due)?);
+        ui.set_recommended(i32::try_from(recommended)?);
+        ui.set_memory(
+            progress
+                .estimated_recall
+                .map_or(-1, |p| (100.0 * p).round() as i32),
+        );
+        self.dashboard_day = Some(today);
+        self.next_due_at = progress.next_due_at;
+        Ok(())
     }
 
     fn bank(&mut self, ui: &AppWindow) -> Result<()> {
         self.version = catalog::version_for(&ui.get_license(), &ui.get_procedure())?;
         let topics = storage::topic_counts(&self.db, &self.version)?;
-        let total: i64 = topics.iter().map(|t| t.total).sum();
+        self.refresh_dashboard(ui, Local::now())?;
+        let total = ui.get_total();
+        ui.set_active_version(self.version.as_str().into());
         ui.set_bank(format!("{} · {total} domande", self.version).into());
+        let mut entries = Vec::new();
+        let mut counts = self
+            .db
+            .prepare("SELECT COUNT(*) FROM questions WHERE source_version=?")?;
+        for edition in catalog::load()?.listati.into_iter().filter(|e| e.pronto) {
+            let count: i64 = counts.query_row([&edition.versione], |r| r.get(0))?;
+            let status = if count == 0 {
+                "Da importare".to_owned()
+            } else {
+                format!("{count} domande locali")
+            };
+            entries.push(Entry {
+                label: format!("{} · {status}", edition.nome).into(),
+                key: edition.versione.into(),
+            });
+        }
+        ui.set_bank_list(model(entries));
         self.topic_ids = topics.iter().map(|t| t.id).collect();
         ui.set_selected_count(topics.len() as i32);
-        ui.set_stats_bank(self.version.as_str().into());
-        ui.set_stats_topic("Tutti".into());
         ui.set_topics(model(
             topics
                 .iter()
                 .map(|t| TopicItem {
-                    label: format!(
-                        "{} · {} domande · {} studiate · {} da ripassare",
-                        t.name, t.total, t.studied, t.due
+                    label: t.name.as_str().into(),
+                    summary: format!(
+                        "{} domande · {} studiate · {} da ripassare",
+                        t.total, t.studied, t.due
                     )
                     .into(),
                     chosen: true,
@@ -146,6 +291,10 @@ impl Controller {
             .optional()?;
         ui.set_asset_root(root.unwrap_or_default().into());
         self.rule(ui);
+        self.refresh_sessions(ui)
+    }
+
+    fn refresh_sessions(&self, ui: &AppWindow) -> Result<()> {
         let sessions = store::unfinished(&self.db)?
             .into_iter()
             .filter(|s| {
@@ -153,10 +302,16 @@ impl Controller {
             })
             .map(|s| Entry {
                 label: format!(
-                    "Riprendi · {} · {}/{} risposte",
+                    "Patente {} · {} · {}/{} risposte · {}",
                     s.license,
+                    if s.kind == "official" {
+                        "Ufficiale"
+                    } else {
+                        "Personalizzata"
+                    },
                     s.questions.iter().filter(|q| q.answer.is_some()).count(),
-                    s.questions.len()
+                    s.questions.len(),
+                    clock_text(s.active_ms, s.remaining_ms)
                 )
                 .into(),
                 key: s.id.into(),
@@ -167,11 +322,16 @@ impl Controller {
     }
 
     fn rule(&self, ui: &AppWindow) {
+        ui.set_official_ready(false);
+        ui.set_official_count(0);
+        ui.set_official_minutes(0);
         let hint = (|| -> Result<String> {
             let rule = verified_rule(&self.db, &ui.get_license(), &ui.get_procedure())?;
-            if ui.get_mode() == "Ufficiale"
-                && crate::exam::catalog::official_quotas(&rule.bank_version).is_none()
-            {
+            ui.set_official_count(i32::try_from(rule.question_count)?);
+            ui.set_official_minutes(i32::try_from(rule.duration_seconds / 60)?);
+            let official = crate::exam::catalog::official_quotas(&rule.bank_version).is_some();
+            ui.set_official_ready(official);
+            if ui.get_mode() == "Ufficiale" && !official {
                 bail!(
                     "Distribuzione ufficiale dei quesiti non verificata per questa edizione. È disponibile la prova personalizzata."
                 );
@@ -204,16 +364,8 @@ impl Controller {
         let count = ui.get_count() as usize;
         let mode = ui.get_mode();
         if mode == "Studio" || mode == "Ripasso" {
-            ensure!(!topics.is_empty(), "Seleziona almeno un argomento");
-            self.study =
-                review::due_cards(&self.db, &self.version, count, &topics, mode == "Ripasso")?
-                    .into();
-            ensure!(
-                !self.study.is_empty(),
-                "Nessuna domanda disponibile per questi argomenti"
-            );
-            ui.set_page("study".into());
-            return self.show_card(ui);
+            let limit = (!ui.get_unlimited_study()).then_some(count);
+            return self.start_study(ui, topics, limit, mode == "Ripasso");
         }
         let config = if mode == "Ufficiale" {
             Config::Official
@@ -243,74 +395,163 @@ impl Controller {
         self.exam(ui, Action::Start)
     }
 
-    fn figure(&self, ui: &AppWindow, relative: Option<&str>) {
+    fn start_study(
+        &mut self,
+        ui: &AppWindow,
+        topics: Vec<i64>,
+        limit: Option<usize>,
+        reviews_only: bool,
+    ) -> Result<()> {
+        ensure!(!topics.is_empty(), "Seleziona almeno un argomento");
+        let cards = review::due_cards(
+            &self.db,
+            &self.version,
+            limit.unwrap_or(1),
+            &topics,
+            reviews_only,
+        )?;
+        ensure!(!cards.is_empty(), "{}", no_scheduled_cards(reviews_only));
+        self.continuous = limit.is_none().then_some(ContinuousStudy {
+            topics,
+            reviews_only,
+        });
+        ui.set_study_continuous(self.continuous.is_some());
+        self.study = cards.into_iter().map(StudyItem::new).collect();
+        self.study_index = 0;
+        self.study_furthest = 0;
+        ui.set_study_total(i32::try_from(self.study.len())?);
+        ui.set_page("study".into());
+        self.show_card(ui)
+    }
+
+    fn figure(&self, ui: &AppWindow, version: &str, relative: Option<&str>) {
         ui.set_has_figure(false);
         let Some(relative) = relative else { return };
-        let root = PathBuf::from(ui.get_asset_root().as_str());
-        let image = (|| {
-            let root = root.canonicalize().ok()?;
-            let path = root.join(relative).canonicalize().ok()?;
-            if !path.starts_with(root) {
-                return None;
+        match self.load_figure(version, relative) {
+            Ok(image) => {
+                ui.set_figure(image);
+                ui.set_has_figure(true);
             }
-            Image::load_from_path(&path).ok()
-        })();
-        if let Some(image) = image {
-            ui.set_figure(image);
-            ui.set_has_figure(true);
-        } else {
-            ui.set_notice("Figura non disponibile. Controlla la cartella delle immagini.".into());
+            Err(error) => ui.set_notice(format!("Figura non disponibile. {error}").into()),
         }
     }
 
-    fn show_card(&mut self, ui: &AppWindow) -> Result<()> {
-        self.study_answer = None;
-        if let Some(card) = self.study.front() {
-            storage::mark_seen(&self.db, &card.id, now())?;
-            ui.set_title_text(ui.get_mode());
-            ui.set_subtitle(card.topic.as_str().into());
-            ui.set_prompt(card.text.as_str().into());
-            ui.set_study_stage("answer".into());
-            ui.set_answer("".into());
-            self.figure(ui, card.figure.as_deref());
+    fn show_card(&self, ui: &AppWindow) -> Result<()> {
+        let item = self
+            .study
+            .get(self.study_index)
+            .context("Nessuna domanda aperta")?;
+        storage::mark_seen(&self.db, &item.card.id, now())?;
+        ui.set_study_number(i32::try_from(self.study_index + 1)?);
+        ui.set_title_text(ui.get_mode());
+        ui.set_subtitle(item.card.topic.as_str().into());
+        ui.set_prompt(item.card.text.as_str().into());
+        self.figure(ui, &self.version, item.card.figure.as_deref());
+        let stage = if self.study_index < self.study_furthest {
+            "history"
+        } else if item.rating.is_some() {
+            "next"
+        } else if item.answer.is_some() {
+            "rate"
         } else {
-            self.home(ui)?;
-            ui.set_notice("Sessione completata.".into());
+            "answer"
+        };
+        ui.set_study_stage(stage.into());
+        ui.set_answer(item.answer.map(truth).unwrap_or("").into());
+        ui.set_study_solution(
+            item.answer
+                .map(|_| truth(item.card.correct))
+                .unwrap_or("")
+                .into(),
+        );
+        ui.set_study_correct(item.answer == Some(item.card.correct));
+        ui.set_study_rating(i32::from(item.rating.unwrap_or(0)));
+        if item.answer.is_some() {
+            let help = review::study_help(&self.db, &item.card)?;
+            ui.set_study_explanation(help.brief.into());
+            ui.set_study_explanation_source(help.brief_source.into());
+            ui.set_study_detail(help.detail.into());
+            ui.set_study_detail_source(help.detail_source.into());
+        } else {
+            ui.set_study_explanation("".into());
+            ui.set_study_explanation_source("".into());
+            ui.set_study_detail("".into());
+            ui.set_study_detail_source("".into());
         }
+        ui.set_details(match item.answer {
+            None => "".into(),
+            Some(value) if value == item.card.correct => "Risposta corretta.".into(),
+            Some(_) => format!("Risposta errata. Soluzione: {}.", truth(item.card.correct)).into(),
+        });
         Ok(())
     }
 
     fn rate(&mut self, ui: &AppWindow, rating: u8) -> Result<()> {
-        let card = self.study.front().context("Nessuna domanda aperta")?;
-        let answer = self.study_answer.context("Rispondi alla domanda")?;
-        let correct = answer == card.correct;
+        let item = self
+            .study
+            .get_mut(self.study_index)
+            .context("Nessuna domanda aperta")?;
+        let correct = item.answer.context("Rispondi alla domanda")? == item.card.correct;
         ensure!(
-            ui.get_study_stage() != "next" && (correct || rating == 1),
+            item.rating.is_none()
+                && self.study_index == self.study_furthest
+                && (correct || rating == 1),
             "Valutazione non disponibile"
         );
         let tx = self.db.transaction()?;
-        review::apply_review(&tx, &card.id, correct, rating, now(), 0.90)?;
+        review::apply_review(&tx, &item.card.id, correct, rating, now(), 0.90)?;
         tx.commit()?;
-        ui.set_study_stage("next".into());
-        Ok(())
+        item.rating = Some(rating);
+        self.show_card(ui)
     }
 
     fn answer_study(&mut self, ui: &AppWindow, value: bool) -> Result<()> {
-        ensure!(ui.get_study_stage() == "answer", "Risposta già registrata");
-        let correct = self
+        let item = self
             .study
-            .front()
-            .context("Nessuna domanda aperta")?
-            .correct;
-        self.study_answer = Some(value);
-        if correct == value {
-            ui.set_details("Corretto. Quanto è stato difficile ricordarla?".into());
-            ui.set_study_stage("rate".into());
-        } else {
-            self.rate(ui, 1)?;
-            ui.set_details(format!("Risposta errata. Soluzione: {}.", truth(correct)).into());
+            .get_mut(self.study_index)
+            .context("Nessuna domanda aperta")?;
+        ensure!(item.answer.is_none(), "Risposta già registrata");
+        if value != item.card.correct {
+            let tx = self.db.transaction()?;
+            review::apply_review(&tx, &item.card.id, false, 1, now(), 0.90)?;
+            tx.commit()?;
+            item.rating = Some(1);
         }
-        Ok(())
+        item.answer = Some(value);
+        self.show_card(ui)
+    }
+
+    fn advance_study(&mut self, ui: &AppWindow) -> Result<()> {
+        ensure!(
+            self.study
+                .get(self.study_index)
+                .is_some_and(|item| item.rating.is_some()),
+            "Rispondi e valuta la domanda prima di proseguire"
+        );
+        if self.study_index + 1 == self.study.len() {
+            let Some(session) = &self.continuous else {
+                self.home(ui)?;
+                ui.set_notice("Sessione completata.".into());
+                return Ok(());
+            };
+            let next = review::due_cards(
+                &self.db,
+                &self.version,
+                1,
+                &session.topics,
+                session.reviews_only,
+            )?;
+            let Some(card) = next.into_iter().next() else {
+                let message = no_scheduled_cards(session.reviews_only);
+                self.home(ui)?;
+                ui.set_notice(message.into());
+                return Ok(());
+            };
+            self.study.push(StudyItem::new(card));
+        }
+        self.study_index += 1;
+        self.study_furthest = self.study_furthest.max(self.study_index);
+        self.show_card(ui)
     }
 
     fn exam(&mut self, ui: &AppWindow, action: Action) -> Result<()> {
@@ -409,7 +650,7 @@ impl Controller {
                 })
                 .collect(),
         ));
-        self.figure(ui, question.image_path.as_deref());
+        self.figure(ui, &s.bank_version, question.image_path.as_deref());
         Ok(())
     }
 
@@ -495,49 +736,38 @@ impl Controller {
             "L'intervallo di date non è valido"
         );
         let dash = statistics::dashboard(&self.db, &filters, now())?;
-        ui.set_details(dash.summary().into());
-        let mut stmt=self.db.prepare("SELECT s.session_id, r.submitted_at,s.kind,r.correct,r.wrong+r.omitted FROM exam_sessions s JOIN exam_results r USING(session_id)
-            WHERE s.license=?1 AND s.procedure=?2 AND s.bank_version=?3 AND (?4 IS NULL OR s.kind=?4) AND (?5 IS NULL OR s.strategy=?5)
-            AND (?6 IS NULL OR r.submitted_at>=?6) AND (?7 IS NULL OR r.submitted_at<?7)
-            AND (?8 IS NULL OR EXISTS(SELECT 1 FROM exam_session_questions q WHERE q.session_id=s.session_id AND q.topic_id=?8))
-            ORDER BY r.submitted_at DESC,s.session_id")?;
-        let entries = stmt
-            .query_map(
-                params![
-                    filters.license,
-                    filters.procedure,
-                    filters.bank_version,
-                    filters.kind,
-                    filters.strategy,
-                    filters.from,
-                    filters.until,
-                    filters.topic_id
-                ],
-                |r| {
-                    let kind: String = r.get(2)?;
-                    Ok(Entry {
-                        key: r.get::<_, String>(0)?.into(),
+        ui.set_stats_overview(dash.overview().into());
+        ui.set_details(dash.breakdown().into());
+        let mut history = Vec::new();
+        for series in &dash.series {
+            for attempt in &series.history {
+                let date = Local
+                    .timestamp_opt(attempt.at, 0)
+                    .single()
+                    .map(|date| date.format("%d/%m/%Y %H:%M").to_string())
+                    .unwrap_or_default();
+                let mode = series.key.label();
+                let scope = if topic_id.is_some() {
+                    " (argomento selezionato)"
+                } else {
+                    ""
+                };
+                let metrics = &attempt.metrics;
+                history.push((
+                    attempt.at,
+                    Entry {
+                        key: attempt.id.as_str().into(),
                         label: format!(
-                            "{} · {} · {} corrette, {} errori",
-                            Local
-                                .timestamp_opt(r.get(1)?, 0)
-                                .single()
-                                .map(|d| d.format("%Y-%m-%d").to_string())
-                                .unwrap_or_default(),
-                            if kind == "custom" {
-                                "Personalizzata"
-                            } else {
-                                "Ufficiale"
-                            },
-                            r.get::<_, i64>(3)?,
-                            r.get::<_, i64>(4)?
+                            "{date} · {mode}{scope} · {} corrette, {} errate, {} omesse",
+                            metrics.correct, metrics.wrong, metrics.omitted
                         )
                         .into(),
-                    })
-                },
-            )?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        ui.set_history(model(entries));
+                    },
+                ));
+            }
+        }
+        history.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.key.cmp(&a.1.key)));
+        ui.set_history(model(history.into_iter().map(|(_, entry)| entry).collect()));
         ui.set_page("stats".into());
         Ok(())
     }
@@ -553,9 +783,24 @@ impl Controller {
 
     #[cfg(any(target_os = "android", test))]
     fn discard_unused_media(&self) -> Result<()> {
-        if !self.staged_media.is_dir() {
+        self.remove_unused_media(None)
+    }
+
+    #[cfg(any(target_os = "android", test))]
+    fn remove_unused_media(
+        &self,
+        candidates: Option<&std::collections::BTreeSet<PathBuf>>,
+    ) -> Result<()> {
+        if candidates.is_some_and(std::collections::BTreeSet::is_empty)
+            || !self.staged_media.is_dir()
+        {
             return Ok(());
         }
+        ensure!(
+            !banks::is_link(&std::fs::symlink_metadata(&self.staged_media)?),
+            "Cartella privata delle immagini non valida"
+        );
+        let parent = self.staged_media.canonicalize()?;
         let mut roots = Vec::new();
         let mut stmt = self
             .db
@@ -576,6 +821,14 @@ impl Controller {
                 continue;
             }
             let dir = item.path().canonicalize()?;
+            if dir.parent() != Some(parent.as_path())
+                || banks::is_link(&std::fs::symlink_metadata(item.path())?)
+            {
+                continue;
+            }
+            if candidates.is_some_and(|paths| !paths.contains(&dir)) {
+                continue;
+            }
             if !roots
                 .iter()
                 .any(|root| root.starts_with(&dir) || dir.starts_with(root))
@@ -642,10 +895,21 @@ impl Controller {
         Ok(())
     }
 
-    fn home(&mut self, ui: &AppWindow) -> Result<()> {
+    fn leave_activity(&mut self, ui: &AppWindow) -> Result<()> {
+        if self.clock.is_some() || self.pending_pause.is_some() {
+            self.exam(ui, Action::Pause)?;
+        }
         self.session = None;
-        self.clock = None;
+        self.study.clear();
+        self.continuous = None;
+        ui.set_study_continuous(false);
         ui.set_confirm_cancel(false);
+        ui.set_cancel_target("".into());
+        Ok(())
+    }
+
+    fn home(&mut self, ui: &AppWindow) -> Result<()> {
+        self.leave_activity(ui)?;
         ui.set_page("home".into());
         #[cfg(target_os = "android")]
         {
@@ -653,6 +917,120 @@ impl Controller {
             ui.set_import_path("".into());
         }
         self.bank(ui)
+    }
+
+    fn section(&mut self, ui: &AppWindow, action: &str) -> Result<()> {
+        if action == "stats" && ui.get_page() == "stats" {
+            return self.stats(ui);
+        }
+        let refresh = self.session.is_some() || !self.study.is_empty() || ui.get_page() == "import";
+        self.leave_activity(ui)?;
+        let page = match action {
+            "study-setup" | "review" | "study-start" | "study-continuous" => {
+                ui.set_mode(
+                    if action == "review" {
+                        "Ripasso"
+                    } else {
+                        "Studio"
+                    }
+                    .into(),
+                );
+                "study-setup"
+            }
+            "simulation" | "official" | "custom" => {
+                let custom = action == "custom";
+                ui.set_mode(
+                    if custom {
+                        "Personalizzata"
+                    } else {
+                        "Ufficiale"
+                    }
+                    .into(),
+                );
+                "simulation"
+            }
+            other => other,
+        };
+        if refresh {
+            self.bank(ui)?;
+        } else if action == "study-start" {
+            self.refresh_dashboard(ui, Local::now())?;
+        } else if matches!(page, "study-setup" | "simulation") {
+            self.rule(ui);
+        }
+        ui.set_page(page.into());
+        if page == "import" {
+            return self.bank_management(ui);
+        }
+        if page == "settings" {
+            ui.set_exam_date_input(ui.get_exam_date());
+        }
+        if matches!(action, "study-start" | "study-continuous") {
+            if ui.get_total() == 0 {
+                ui.set_page("import".into());
+                self.bank_management(ui)?;
+                ui.set_notice("Importa il listato per iniziare a studiare.".into());
+                return Ok(());
+            }
+            let topics = self.topic_ids.clone();
+            if action == "study-continuous" {
+                return self.start_study(ui, topics, None, false);
+            }
+            if self.quick_study_count == 0 {
+                ui.set_page("home".into());
+                ui.set_notice("Obiettivo di oggi completato.".into());
+                return Ok(());
+            }
+            return self.start_study(ui, topics, Some(self.quick_study_count), false);
+        }
+        if action == "stats" {
+            return self.stats(ui);
+        }
+        Ok(())
+    }
+
+    fn switch_bank(&mut self, ui: &AppWindow, version: &str) -> Result<()> {
+        let edition = catalog::load()?
+            .listati
+            .into_iter()
+            .find(|e| e.pronto && e.versione == version)
+            .context("Listato non disponibile")?;
+        let license = if edition
+            .patenti
+            .iter()
+            .any(|l| l == ui.get_license().as_str())
+        {
+            ui.get_license()
+        } else if edition.patenti.iter().any(|l| l == "B") {
+            "B".into()
+        } else {
+            edition
+                .patenti
+                .first()
+                .context("Categoria mancante")?
+                .as_str()
+                .into()
+        };
+        ui.set_license(license);
+        ui.set_procedure(edition.procedura.into());
+        self.refresh_bank(ui)
+    }
+
+    fn refresh_bank(&mut self, ui: &AppWindow) -> Result<()> {
+        self.leave_activity(ui)?;
+        self.bank(ui)?;
+        profile::select(&self.db, &ui.get_license(), &ui.get_procedure())?;
+        ui.set_stats_bank(self.version.as_str().into());
+        ui.set_stats_topic("Tutti".into());
+        match ui.get_page().as_str() {
+            "stats" => self.stats(ui),
+            "import" => self.bank_management(ui),
+            "study" | "paused" | "exam" | "result" => {
+                ui.set_page("home".into());
+                Ok(())
+            }
+            _ => Ok(()),
+        }
     }
 
     fn act(&mut self, ui: &AppWindow, action: &str) -> Result<()> {
@@ -669,57 +1047,77 @@ impl Controller {
             }
             #[cfg(target_os = "android")]
             "pick-bank" => crate::android::choose_bank(),
+            #[cfg(not(target_os = "android"))]
+            "pick-bank" => self.pick_bank(ui),
+            "save-bank-key" => self.set_bank_key(ui),
+            "preview-archive" => self.preview_archive(ui),
+            "clean-archive" => self.clean_archive(ui),
+            "cancel-cleanup" => self.bank_management(ui),
             "home" => self.home(ui),
-            "bank" => self.bank(ui),
+            "bank" => self.refresh_bank(ui),
+            "onboarding-save" | "onboarding-undecided" => {
+                if ui.get_show_exam_onboarding() {
+                    let input = ui.get_onboarding_date();
+                    let date = (action == "onboarding-save").then_some(input.as_str());
+                    if let Err(error) = profile::finish_exam_onboarding(
+                        &mut self.db,
+                        &ui.get_license(),
+                        &ui.get_procedure(),
+                        date,
+                    ) {
+                        ui.set_onboarding_error(error.to_string().into());
+                    } else {
+                        ui.set_onboarding_error("".into());
+                        ui.set_show_exam_onboarding(false);
+                        self.refresh_dashboard(ui, Local::now())?;
+                    }
+                }
+                Ok(())
+            }
+            "save-exam-date" => {
+                profile::save_exam_date(
+                    &self.db,
+                    &ui.get_license(),
+                    &ui.get_procedure(),
+                    &ui.get_exam_date_input(),
+                )?;
+                self.refresh_dashboard(ui, Local::now())?;
+                ui.set_notice(
+                    if ui.get_exam_date().is_empty() {
+                        "Data d’esame rimossa."
+                    } else {
+                        "Data d’esame salvata."
+                    }
+                    .into(),
+                );
+                Ok(())
+            }
+            "verify-bank" => self.verify_bank(ui),
             "config" => {
                 self.rule(ui);
                 Ok(())
             }
-            "import" => {
-                ui.set_page("import".into());
-                Ok(())
-            }
+            "study-setup" | "review" | "study-start" | "study-continuous" | "simulation"
+            | "official" | "custom" | "import" | "settings" | "stats" => self.section(ui, action),
             "save-media" => {
+                ensure!(
+                    self.signed_file()?.is_none(),
+                    "Reimporta il pacchetto firmato per cambiare la cartella delle immagini"
+                );
                 Self::save_media(&self.db, &self.version, &ui.get_asset_root())?;
                 self.home(ui)
             }
-            "import-file" => {
-                let file = PathBuf::from(ui.get_import_path().as_str());
-                let root = if ui.get_asset_root().is_empty() {
-                    file.canonicalize()?
-                        .parent()
-                        .context("Cartella del listato mancante")?
-                        .to_string_lossy()
-                        .into_owned()
-                } else {
-                    ui.get_asset_root().to_string()
-                };
-                let questions = storage::load_normalized_questions(&file)?;
-                let version = catalog::version_for(&ui.get_license(), &ui.get_procedure())?;
-                let tx = self.db.transaction()?;
-                let count = storage::import_questions_in(&tx, &version, questions)?;
-                verified_rule(&tx, &ui.get_license(), &ui.get_procedure())?;
-                let stored: i64 = tx.query_row(
-                    "SELECT COUNT(*) FROM questions WHERE source_version=?1",
-                    [&version],
-                    |row| row.get(0),
-                )?;
-                ensure!(
-                    i64::try_from(count)? == stored,
-                    "Listato incompleto per {version}"
-                );
-                Self::save_media(&tx, &version, &root)?;
-                tx.commit()?;
-                self.home(ui)?;
-                ui.set_notice(format!("Importate {count} domande.").into());
-                Ok(())
+            "import-file" | "confirm-unsigned" => {
+                self.import_bank(ui, action == "confirm-unsigned")
             }
             "start" => self.start(ui),
             "true" | "false" if ui.get_page() == "study" => self.answer_study(ui, action == "true"),
-            "next" => {
-                self.study.pop_front();
+            "study-prev" if ui.get_page() == "study" => {
+                ensure!(self.study_index > 0, "Prima domanda della sessione");
+                self.study_index -= 1;
                 self.show_card(ui)
             }
+            "next" if ui.get_page() == "study" => self.advance_study(ui),
             "true" | "false" => self.exam(ui, Action::Answer(Some(action == "true"))),
             "clear" => self.exam(ui, Action::Answer(None)),
             "submit" => {
@@ -742,7 +1140,6 @@ impl Controller {
                 ensure!(ui.get_confirm_cancel(), "Conferma l'annullamento");
                 self.exam(ui, Action::Cancel)
             }
-            "stats" => self.stats(ui),
             "result" => self.show_result(
                 ui,
                 &self
@@ -758,7 +1155,18 @@ impl Controller {
 
 fn feedback(ui: &AppWindow, res: Result<()>) {
     if let Err(error) = res {
-        ui.set_notice(format!("{error:#}").into());
+        eprintln!("ZeroPatenti: {error:#}");
+        let message = error.to_string();
+        let technical = ["fsrs", "retention", "stability", "retrievability"];
+        let public = if technical
+            .iter()
+            .any(|term| message.to_ascii_lowercase().contains(term))
+        {
+            "Non è stato possibile aggiornare il ripasso della domanda. Riprova.".to_string()
+        } else {
+            message
+        };
+        ui.set_notice(public.into());
     }
 }
 
@@ -774,9 +1182,14 @@ fn clock_text(elapsed: i64, left: Option<i64>) -> String {
 
 fn bind(mut controller: Controller) -> Result<(AppWindow, Rc<RefCell<Controller>>, Timer)> {
     let ui = AppWindow::new()?;
+    if let Some((license, procedure)) = profile::active(&controller.db)? {
+        ui.set_license(license.into());
+        ui.set_procedure(procedure.into());
+    }
     controller.home(&ui)?;
-    #[cfg(target_os = "android")]
-    ui.set_folder_picker(true);
+    ui.set_show_exam_onboarding(profile::needs_exam_onboarding(&controller.db)?);
+    ui.set_stats_bank(controller.version.as_str().into());
+    ui.set_stats_topic("Tutti".into());
     #[cfg(target_os = "android")]
     if let Some(dir) = crate::android::import_dir() {
         ui.set_import_path(dir.join("questions.json").to_string_lossy().as_ref().into());
@@ -800,7 +1213,19 @@ fn bind(mut controller: Controller) -> Result<(AppWindow, Rc<RefCell<Controller>
         feedback(&ui, res);
     });
     let weak = ui.as_weak();
-    ui.on_matches_topic(|label, query| label.to_lowercase().contains(&query.trim().to_lowercase()));
+    ui.on_matching_topics(|topics, query, selected_only, _selection_count| {
+        let query = query.trim().to_lowercase();
+        model(
+            topics
+                .iter()
+                .enumerate()
+                .filter(|(_, topic)| {
+                    (!selected_only || topic.chosen) && topic.label.to_lowercase().contains(&query)
+                })
+                .map(|(i, _)| i as i32)
+                .collect(),
+        )
+    });
     ui.on_topic_toggle(move |i| {
         let ui = weak.unwrap();
         let topics = ui.get_topics();
@@ -818,6 +1243,37 @@ fn bind(mut controller: Controller) -> Result<(AppWindow, Rc<RefCell<Controller>
         ui.set_confirm_cancel(false);
         ui.set_errors_only(false);
         let res = (|| {
+            if kind == "bank" {
+                return c.switch_bank(&ui, &id);
+            }
+            if kind == "cancel-saved" || kind == "resume-saved" {
+                ensure!(
+                    matches!(ui.get_page().as_str(), "home" | "simulation"),
+                    "Torna all’elenco delle prove sospese"
+                );
+                let saved = store::view(&c.db, &id)?;
+                ensure!(
+                    saved.license == ui.get_license().as_str()
+                        && saved.procedure == ui.get_procedure().as_str()
+                        && matches!(saved.status.as_str(), "paused" | "created"),
+                    "Prova sospesa non disponibile"
+                );
+                if kind == "cancel-saved" {
+                    ensure!(
+                        ui.get_cancel_target() == id,
+                        "Conferma l’annullamento della prova selezionata"
+                    );
+                    store::command(&mut c.db, &id, Action::Cancel, saved.active_ms, now())?;
+                    ui.set_cancel_target("".into());
+                    c.refresh_sessions(&ui)?;
+                    ui.set_notice("Prova annullata.".into());
+                    return Ok(());
+                }
+                c.leave_activity(&ui)?;
+                c.session = Some(saved);
+                return c.act(&ui, "resume");
+            }
+            c.leave_activity(&ui)?;
             c.session = Some(store::view(&c.db, &id)?);
             if kind == "result" {
                 c.show_result(&ui, &id)
@@ -838,6 +1294,8 @@ fn bind(mut controller: Controller) -> Result<(AppWindow, Rc<RefCell<Controller>
         }
         if c.clock.is_some() || c.pending_pause.is_some() {
             feedback(&ui, c.tick(&ui));
+        } else if ui.get_page() == "home" {
+            feedback(&ui, c.refresh_dashboard_if_needed(&ui, Local::now()));
         }
     });
     #[cfg(target_os = "android")]
@@ -860,6 +1318,7 @@ pub fn run(path: &Path) -> Result<()> {
     #[cfg(not(target_os = "android"))]
     {
         use slint::winit_030::{EventResult, WinitWindowAccessor, winit::event::WindowEvent};
+        ui.window().set_size(slint::LogicalSize::new(1080., 650.));
         let (weak, data) = (ui.as_weak(), state.clone());
         ui.window().on_winit_window_event(move |_, event| {
             if matches!(event, WindowEvent::Focused(false))

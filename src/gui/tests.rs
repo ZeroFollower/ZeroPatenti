@@ -1,10 +1,15 @@
 use super::*;
+mod banks;
+mod continuous;
+mod profile;
+mod study_ui;
 use slint::platform::{
     Platform, WindowAdapter,
     software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
 };
 
 struct TestPlatform;
+
 impl Platform for TestPlatform {
     fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
         Ok(MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer))
@@ -20,6 +25,7 @@ fn slint_callbacks_import_pause_reopen_submit_and_filter_results() -> Result<()>
     let csv = dir.join("questions.csv");
     std::fs::write(&csv, include_bytes!("../../examples/domande_demo.csv"))?;
     let (ui, state, timer) = bind(Controller::open(&db)?)?;
+    assert_eq!((ui.get_official_count(), ui.get_official_minutes()), (0, 0));
     ui.invoke_act("import".into());
     ui.set_import_path(csv.to_string_lossy().as_ref().into());
     // An unrelated bank under B must leave the selection available for a clean retry.
@@ -34,8 +40,21 @@ fn slint_callbacks_import_pause_reopen_submit_and_filter_results() -> Result<()>
         c.db.execute("DELETE FROM questions", [])?;
     }
     ui.invoke_act("import-file".into());
+    assert_eq!(
+        ui.get_page(),
+        "import",
+        "L’importazione senza firma richiede conferma"
+    );
+    assert_eq!(storage::progress(&state.borrow().db, "AB-7020")?.total, 0);
+    ui.invoke_act("confirm-unsigned".into());
     assert_eq!(ui.get_page(), "home", "{}", ui.get_notice());
     assert!(ui.get_bank().contains("2 domande"));
+    ui.invoke_act("verify-bank".into());
+    assert!(ui.get_notice().contains("AB-7020 verificato"));
+    assert_eq!(
+        (ui.get_official_count(), ui.get_official_minutes()),
+        (30, 20)
+    );
     let original_root = ui.get_asset_root();
     let replacement = dir.join("replacement");
     std::fs::create_dir(&replacement)?;
@@ -82,6 +101,7 @@ fn slint_callbacks_import_pause_reopen_submit_and_filter_results() -> Result<()>
         .get_sessions()
         .row_data(0)
         .context("Sessione sospesa mancante")?;
+    assert!(saved.label.contains("Tempo residuo"));
     ui.invoke_open_entry("paused".into(), saved.key.clone());
     ui.invoke_act("resume".into());
     assert_eq!(ui.get_position(), 1);
@@ -131,6 +151,8 @@ fn slint_callbacks_import_pause_reopen_submit_and_filter_results() -> Result<()>
     ui.invoke_act("stats".into());
     assert_eq!(ui.get_history().row_count(), 1, "{}", ui.get_notice());
     assert_eq!(ui.get_history().row_data(0).unwrap().key, saved.key);
+    assert!(ui.get_stats_overview().contains("Copertura"));
+    assert!(!ui.get_stats_overview().contains("Andamento recente"));
     let trend_date = format!("Andamento recente\n{}", local_date.format("%d/%m/%Y"));
     assert!(
         ui.get_details().contains(&trend_date),
@@ -153,7 +175,18 @@ fn slint_callbacks_import_pause_reopen_submit_and_filter_results() -> Result<()>
             .iter()
             .any(|v| v.contains("Segnaletica"))
     );
+    let selected_topic = ui
+        .get_stats_topics()
+        .iter()
+        .find(|v| v.contains("Segnaletica"))
+        .unwrap();
+    ui.set_stats_topic(selected_topic.clone());
+    ui.invoke_act("stats".into());
     ui.invoke_open_entry("result".into(), saved.key);
+    ui.invoke_act("stats".into());
+    assert_eq!(ui.get_stats_bank(), "AB-ARCHIVIO");
+    assert_eq!(ui.get_stats_topic(), selected_topic);
+    assert_eq!(ui.get_history().row_count(), 1);
     let logs: i64 = state
         .borrow()
         .db
@@ -162,6 +195,99 @@ fn slint_callbacks_import_pause_reopen_submit_and_filter_results() -> Result<()>
     drop(timer);
     drop(ui);
     drop(state);
+    std::fs::remove_dir_all(dir)?;
+    Ok(())
+}
+
+#[test]
+fn guided_study_keeps_graded_answers_when_revisiting() -> Result<()> {
+    slint::platform::set_platform(Box::new(TestPlatform))?;
+    let dir = std::env::temp_dir().join(format!("zp-study-{}-{}", std::process::id(), now()));
+    std::fs::create_dir(&dir)?;
+    let csv = dir.join("questions.csv");
+    std::fs::write(&csv, include_bytes!("../../examples/domande_demo.csv"))?;
+    let mut c = Controller::open(&dir.join("db"))?;
+    storage::import_file(&mut c.db, "AB-7020", &csv)?;
+    let (ui, state, timer) = bind(c)?;
+    assert_eq!(
+        (
+            ui.get_total(),
+            ui.get_studied(),
+            ui.get_due(),
+            ui.get_recommended(),
+            ui.get_memory()
+        ),
+        (2, 0, 0, 2, -1)
+    );
+    ui.invoke_act("study-start".into());
+    assert_eq!(ui.get_page(), "study", "{}", ui.get_notice());
+    assert_eq!((ui.get_study_number(), ui.get_study_total()), (1, 2));
+    assert!(ui.get_study_solution().is_empty());
+    assert!(ui.get_study_explanation().is_empty());
+    assert!(ui.get_study_detail().is_empty());
+    let first = ui.get_prompt();
+    ui.invoke_act("next".into());
+    assert_eq!(ui.get_prompt(), first);
+    let is_true = first.contains("rosso");
+    ui.invoke_act(if is_true { "true" } else { "false" }.into());
+    assert_eq!(ui.get_study_stage(), "rate");
+    assert!(!ui.get_study_explanation().is_empty());
+    assert!(ui.get_study_detail_source().contains("AB-7020"));
+    ui.invoke_jump(3);
+    ui.invoke_act("next".into());
+    let second = ui.get_prompt();
+    assert_ne!(first, second);
+    ui.invoke_act("study-prev".into());
+    assert_eq!(ui.get_prompt(), first);
+    assert_eq!(ui.get_study_stage(), "history");
+    assert_eq!(ui.get_answer(), truth(is_true));
+    assert!(ui.get_study_correct());
+    assert_eq!(ui.get_study_solution(), truth(is_true));
+    assert_eq!(ui.get_study_rating(), 3);
+    ui.invoke_jump(1);
+    ui.invoke_act("next".into());
+    assert_eq!(ui.get_prompt(), second);
+    assert_eq!(ui.get_study_stage(), "answer");
+    assert!(ui.get_study_detail().is_empty());
+    assert_eq!(ui.get_study_number(), 2);
+    ui.invoke_act(if is_true { "true" } else { "false" }.into());
+    assert_eq!(ui.get_study_stage(), "next");
+    assert!(!ui.get_study_correct());
+    assert!(!ui.get_study_detail().is_empty());
+    assert_eq!(ui.get_study_solution(), truth(!is_true));
+    assert_eq!(ui.get_study_rating(), 1);
+    ui.invoke_act("next".into());
+    assert_eq!(ui.get_page(), "home");
+    assert_eq!(storage::progress(&state.borrow().db, "AB-7020")?.reviews, 2);
+    assert_eq!(
+        (
+            ui.get_studied(),
+            ui.get_due(),
+            ui.get_recommended(),
+            ui.get_memory()
+        ),
+        (2, 0, 0, 100)
+    );
+    state.borrow().db.execute(
+        "UPDATE card_state SET last_review_at=last_review_at-86400000, due_at=0",
+        [],
+    )?;
+    ui.invoke_act("home".into());
+    assert_eq!(ui.get_due(), 2);
+    assert!((0..100).contains(&ui.get_memory()));
+    ui.invoke_act("review".into());
+    assert_eq!(ui.get_mode(), "Ripasso");
+    assert_eq!(ui.get_page(), "study-setup");
+    ui.invoke_act("settings".into());
+    assert!(ui.get_bank_list().iter().any(|e| e.key == "AM-MIT-2025"));
+    ui.invoke_open_entry("bank".into(), "AM-MIT-2025".into());
+    assert_eq!(ui.get_page(), "settings");
+    assert_eq!(ui.get_active_version(), "AM-MIT-2025");
+    assert_eq!((ui.get_total(), ui.get_memory()), (0, -1));
+    assert!(!ui.get_official_ready());
+    ui.invoke_act("study-start".into());
+    assert_eq!(ui.get_page(), "import");
+    drop((timer, ui, state));
     std::fs::remove_dir_all(dir)?;
     Ok(())
 }
@@ -205,6 +331,32 @@ fn exam_grid_tracks_answers_across_page_boundaries() -> Result<()> {
     ui.invoke_jump(25);
     ui.invoke_act("clear".into());
     assert_eq!(ui.get_grid().row_data(0).unwrap(), "26");
+    let id = state.borrow().session.as_ref().unwrap().id.clone();
+    ui.invoke_act("settings".into());
+    assert_eq!(ui.get_page(), "settings", "{}", ui.get_notice());
+    assert!(state.borrow().clock.is_none());
+    assert_eq!(store::view(&state.borrow().db, &id)?.status, "paused");
+    ui.invoke_act("simulation".into());
+    assert_eq!(ui.get_mode(), "Ufficiale");
+    assert!(
+        ui.get_sessions()
+            .iter()
+            .any(|entry| entry.key == id.as_str())
+    );
+    ui.invoke_open_entry("cancel-saved".into(), id.as_str().into());
+    assert_eq!(store::view(&state.borrow().db, &id)?.status, "paused");
+    ui.invoke_open_entry("resume-saved".into(), id.as_str().into());
+    assert_eq!(ui.get_page(), "exam");
+    ui.invoke_act("pause".into());
+    ui.invoke_act("simulation".into());
+    ui.invoke_topic_toggle(0);
+    let chosen = ui.get_selected_count();
+    ui.set_cancel_target(id.as_str().into());
+    ui.invoke_open_entry("cancel-saved".into(), id.as_str().into());
+    assert_eq!(store::view(&state.borrow().db, &id)?.status, "cancelled");
+    assert_eq!(ui.get_sessions().row_count(), 0);
+    assert_eq!(ui.get_selected_count(), chosen);
+    assert!(!ui.get_topics().row_data(0).unwrap().chosen);
     drop(timer);
     drop(ui);
     drop(state);

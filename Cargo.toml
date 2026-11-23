@@ -16,13 +16,15 @@ required-features = ["gui"]
 
 [features]
 default = []
-gui = ["dep:slint", "dep:jni"]
+gui = ["dep:slint", "dep:jni", "dep:ed25519-dalek", "dep:hex", "dep:tinyfiledialogs"]
 
 [dependencies]
 anyhow = "1"
 chrono = { version = "0.4.45", features = ["clock"] }
 clap = { version = "4.6.9", features = ["derive"] }
 csv = "1.4.0"
+ed25519-dalek = { version = "2.2", optional = true }
+hex = { version = "0.4", optional = true }
 fsrs = "7.0.0"
 rusqlite = { version = "0.43.0", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
@@ -30,7 +32,8 @@ serde_json = "1"
 sha2 = "0.10"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
-slint = { version = "1.19.0", optional = true, default-features = false, features = ["std", "compat-1-2", "backend-winit", "unstable-winit-030", "renderer-software"] }
+tinyfiledialogs = { version = "3.9", default-features = false, optional = true }
+slint = { version = "1.19.0", optional = true, default-features = false, features = ["std", "compat-1-2", "accessibility", "backend-winit", "unstable-winit-030", "renderer-software"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = { version = "0.21", optional = true }

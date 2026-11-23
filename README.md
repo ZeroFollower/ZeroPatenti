@@ -16,6 +16,12 @@ La CLI Rust e la GUI Slint per desktop e Android condividono la banca dati SQLit
 
 ## Esperienza di studio decisa
 
+Al primo avvio puoi inserire il giorno dell’esame oppure scegliere **Data ancora non definita**. Entrambe le scelte vengono ricordate. In **Impostazioni → Data dell’esame** puoi aggiungere o cambiare la data per la patente e la procedura selezionate. Con una data, la dashboard mostra il conto alla rovescia e quante domande nuove restano da affrontare oggi. **Inizia a studiare** dà la precedenza ai ripassi scaduti.
+
+Con **Studio continuo** puoi proseguire anche dopo l’obiettivo del giorno. Per limitarti ad alcuni argomenti, scegli **Senza limite** in **Studio e ripasso**. A ogni avanzamento, Studio propone la carta con la scadenza più vecchia tra i ripassi già dovuti. Quando li hai completati, passa ai quesiti nuovi. Ogni valutazione aggiorna con FSRS la scadenza della carta. Ripasso propone solo le carte già scadute. Nella CLI la stessa opzione è `--unlimited`, per esempio `zeropatenti study-for-license --license B --unlimited`.
+
+In **Studio e ripasso** puoi cercare e selezionare gli argomenti e ingrandire le figure. I listati JSON e CSV possono includere i campi editoriali facoltativi `spiegazione`, `approfondimento` e `fonte_spiegazione`.
+
 1. Leggi una domanda e rispondi **VERO/FALSO**.
 2. Visualizza immediatamente l'esito e la soluzione.
 3. In caso di errore, ripasso automatico.
@@ -58,7 +64,15 @@ python scripts/normalize_bank.py listato.pdf banca
 cargo run --features gui --bin zeropatenti-gui
 ```
 
-In **Banca dati e immagini** importa `banca/questions.json` e usa `banca` come cartella delle immagini. Mantienila disponibile per vedere le figure offline. Puoi scegliere un database desktop con `--db percorso.sqlite3`; il predefinito è lo stesso della CLI.
+Apri **Banche dati**, seleziona il listato e premi **Importa listato e immagini**. Importa `banca/questions.json` e usa `banca` come cartella delle immagini. Mantienila disponibile per vedere le figure offline. Puoi scegliere un database desktop con `--db percorso.sqlite3`; il predefinito è lo stesso della CLI.
+
+In **Banche dati → Chiave pubblica dell’editore**, salva la chiave Ed25519 ricevuta dall’editore tramite un canale attendibile. Quando trova `manifest.json` o `manifest.sig`, la GUI richiede entrambi e controlla firma, edizione e SHA-256 dei quesiti e di tutte le figure referenziate. **Verifica listato** ripete il controllo sui file locali. Durante lo studio e gli esami l’app ricontrolla ogni figura firmata prima di mostrarla. Per i listati precedenti la GUI verifica i quesiti rispetto al catalogo e richiede **Conferma importazione senza firma**. La pulizia mostra in anteprima le edizioni fuori catalogo e conserva quelle con progressi o prove.
+
+Per gli editori, lo script seguente richiede Python 3.11+ e OpenSSL 3. La chiave privata Ed25519 va custodita fuori dalla cartella distribuita. Lo script produce il manifest e la firma binaria di 64 byte, e stampa la chiave pubblica da comunicare separatamente. Una distribuzione dell’app può fissare la chiave pubblica impostando `ZEROPATENTI_BANK_PUBLIC_KEY` (64 cifre esadecimali) durante la compilazione.
+
+```bash
+python scripts/sign_bank.py banca --version AB-7020 --private-key /percorso/privato/editore.pem
+```
 
 Su Android usa **Scegli la cartella del listato** per selezionare la cartella contenente `questions.json` e `figures/`, poi premi **Importa**. L'app conserva una copia privata. Per generare l'APK di sviluppo usa JDK 21, SDK Android 35 e NDK r30. Imposta `JAVA_HOME`, `ANDROID_HOME` e `ANDROID_NDK_ROOT` sulle rispettive cartelle:
 

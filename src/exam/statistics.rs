@@ -331,6 +331,8 @@ pub struct Memory {
     pub seen: usize,
     pub studied: usize,
     pub due: usize,
+    /// Earliest future review in this bank or topic, in UTC seconds.
+    pub next_due_at: Option<i64>,
     pub due_next_week: usize,
     pub due_later: usize,
     pub reviews: usize,
@@ -342,7 +344,7 @@ pub struct Memory {
 /// Card state is shared by study, review and exams on the same bank. Periods
 /// filter the review ledger. Coverage, due dates and estimates describe the
 /// current card state, independent of the exam strategy and period.
-fn memory(db: &Connection, f: &Filters, now: i64) -> Result<Memory> {
+pub(crate) fn memory(db: &Connection, f: &Filters, now: i64) -> Result<Memory> {
     let restrict = f.license.is_some() || f.procedure.is_some();
     let mut banks: Vec<String> = crate::catalog::load()?
         .listati
@@ -369,11 +371,12 @@ fn memory(db: &Connection, f: &Filters, now: i64) -> Result<Memory> {
     let scope = "(:version IS NULL OR q.source_version=:version)
         AND (:topic IS NULL OR q.topic_id=:topic)
         AND (NOT :restrict OR q.source_version IN (SELECT value FROM json_each(:banks)))";
+    // The unary plus removes column affinity so SQLite can probe the JSON expression index.
     let mut stmt = db.prepare(&format!(
         "SELECT s.last_review_at,s.due_at,s.stability,s.stability_fast,s.difficulty,
         EXISTS(SELECT 1 FROM study_card_views v WHERE v.card_id=q.card_id) OR
         EXISTS(SELECT 1 FROM exam_events e WHERE e.event_type='QuestionDisplayed'
-               AND json_extract(e.payload_json,'$.question_id')=q.card_id)
+               AND json_extract(e.payload_json,'$.question_id')=+q.card_id)
         FROM questions q LEFT JOIN card_state s ON s.card_id=q.card_id WHERE {scope}"
     ))?;
     let mut rows=stmt.query(named_params!{":version":f.bank_version,":topic":f.topic_id,":restrict":restrict,":banks":banks})?;
@@ -394,10 +397,13 @@ fn memory(db: &Connection, f: &Filters, now: i64) -> Result<Memory> {
         let due: i64 = r.get(1)?;
         if due <= now {
             m.due += 1;
-        } else if due <= now.saturating_add(7 * 86400) {
-            m.due_next_week += 1;
         } else {
-            m.due_later += 1;
+            m.next_due_at = Some(m.next_due_at.map_or(due, |earliest| earliest.min(due)));
+            if due <= now.saturating_add(7 * 86400) {
+                m.due_next_week += 1;
+            } else {
+                m.due_later += 1;
+            }
         }
         let state = MemoryState {
             stability: r.get(2)?,
@@ -440,6 +446,18 @@ pub struct SeriesKey {
     pub bank_version: String,
     pub kind: String,
     pub strategy: String,
+}
+
+impl SeriesKey {
+    pub(crate) fn label(&self) -> &'static str {
+        match (self.kind.as_str(), self.strategy.as_str()) {
+            ("official", _) => "Ufficiale",
+            (_, "balanced") => "Personalizzata equilibrata",
+            (_, "random") => "Personalizzata casuale",
+            (_, "intelligent") => "Personalizzata intelligente",
+            _ => "Personalizzata",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -550,7 +568,7 @@ pub fn dashboard(conn: &Connection, f: &Filters, now: i64) -> Result<Dashboard> 
 }
 
 impl Dashboard {
-    pub fn summary(&self) -> String {
+    pub fn overview(&self) -> String {
         let m = &self.memory;
         let mut out = format!(
             "Copertura attuale della banca · {} viste su {} · {} studiate\nRipassi in scadenza · {} già dovuti · {} nei prossimi 7 giorni · {} successivi\n{} risposte registrate nel periodo da studio, ripasso e prove personalizzate",
@@ -576,20 +594,38 @@ impl Dashboard {
             out.push_str("\n\nNessuna prova conclusa o annullata nel periodo.");
         }
         for s in &self.series {
-            let label = if s.key.kind == "official" {
-                "Ufficiale"
-            } else {
-                match s.key.strategy.as_str() {
-                    "balanced" => "Personalizzata equilibrata",
-                    "random" => "Personalizzata casuale",
-                    "intelligent" => "Personalizzata intelligente",
-                    _ => "Personalizzata",
-                }
-            };
+            let _ = write!(
+                out,
+                "\n\n{} · {} concluse · {} annullate",
+                s.key.label(),
+                s.history.len(),
+                s.cancelled
+            );
+            if let Some(latest) = s.history.last() {
+                let _ = write!(out, "\nUltima prova · {}", latest.metrics);
+            }
+            if let Some(topic) = s
+                .topics
+                .values()
+                .min_by(|a, b| a.metrics.accuracy().total_cmp(&b.metrics.accuracy()))
+            {
+                let _ = write!(
+                    out,
+                    "\nArgomento con la percentuale più bassa · {} · {}",
+                    topic.name, topic.metrics
+                );
+            }
+        }
+        out
+    }
+
+    pub fn breakdown(&self) -> String {
+        let mut out = String::new();
+        for s in &self.series {
             let _ = write!(
                 out,
                 "\n\n{} · {} · {} · {}\n{} concluse · {} superate · {} annullate",
-                label,
+                s.key.label(),
                 s.key.license,
                 s.key.procedure,
                 s.key.bank_version,
@@ -629,6 +665,14 @@ impl Dashboard {
                 );
             }
         }
-        out
+        out.trim_start().to_owned()
+    }
+
+    pub fn summary(&self) -> String {
+        [self.overview(), self.breakdown()]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n")
     }
 }

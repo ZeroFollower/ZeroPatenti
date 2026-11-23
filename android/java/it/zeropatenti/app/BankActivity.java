@@ -73,7 +73,10 @@ public class BankActivity extends NativeActivity {
                 try (Cursor cursor = children(tree, treeId)) {
                     while (cursor.moveToNext()) {
                         String id = cursor.getString(0), name = cursor.getString(1);
-                        if (Document.MIME_TYPE_DIR.equals(cursor.getString(2))) {
+                        if ("manifest.json".equals(name) || "manifest.sig".equals(name)) {
+                            if (Document.MIME_TYPE_DIR.equals(cursor.getString(2))) throw new IOException("Manifest o firma non validi");
+                            copy(tree, id, new File(dir, name));
+                        } else if (Document.MIME_TYPE_DIR.equals(cursor.getString(2))) {
                             if ("figures".equals(name)) figuresId = id;
                         } else if ("questions.json".equals(name) || "questions.csv".equals(name)) {
                             if (bank != null) throw new IOException("Seleziona una cartella con un solo listato");

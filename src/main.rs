@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use chrono::{TimeZone, Utc};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use rusqlite::Connection;
 use std::{
     io::{self, Write},
@@ -19,6 +19,16 @@ struct Cli {
     db: PathBuf,
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Args)]
+struct StudyLength {
+    /// Numero di domande della sessione.
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
+    /// Prosegui fino a Q o all’esaurimento delle domande disponibili.
+    #[arg(long, conflicts_with = "limit")]
+    unlimited: bool,
 }
 
 #[derive(Subcommand)]
@@ -41,8 +51,8 @@ enum Command {
         procedure: String,
         #[arg(long = "topic-id", value_delimiter = ',', num_args = 1..)]
         topics: Vec<i64>,
-        #[arg(long, default_value_t = 20)]
-        limit: usize,
+        #[command(flatten)]
+        length: StudyLength,
         #[arg(long, default_value_t = 0.90)]
         retention: f32,
     },
@@ -61,8 +71,8 @@ enum Command {
         procedure: String,
         #[arg(long = "topic-id", value_delimiter = ',', num_args = 1..)]
         topics: Vec<i64>,
-        #[arg(long, default_value_t = 20)]
-        limit: usize,
+        #[command(flatten)]
+        length: StudyLength,
         #[arg(long, default_value_t = 0.90)]
         retention: f32,
     },
@@ -96,8 +106,8 @@ enum Command {
         version: String,
         #[arg(long = "topic-id", value_delimiter = ',', num_args = 1..)]
         topics: Vec<i64>,
-        #[arg(long, default_value_t = 20)]
-        limit: usize,
+        #[command(flatten)]
+        length: StudyLength,
         #[arg(long, default_value_t = 0.90)]
         retention: f32,
     },
@@ -107,8 +117,8 @@ enum Command {
         version: String,
         #[arg(long = "topic-id", value_delimiter = ',', num_args = 1..)]
         topics: Vec<i64>,
-        #[arg(long, default_value_t = 20)]
-        limit: usize,
+        #[command(flatten)]
+        length: StudyLength,
         #[arg(long, default_value_t = 0.90)]
         retention: f32,
     },
@@ -163,12 +173,12 @@ fn main() -> Result<()> {
             license,
             procedure,
             topics,
-            limit,
+            length,
             retention,
         } => {
             let version = catalog::version_for(&license, &procedure)?;
             ensure_imported(&conn, &version)?;
-            study(&mut conn, &version, limit, retention, &topics, false)?;
+            study(&mut conn, &version, length, retention, &topics, false)?;
         }
         Command::TopicsForLicense { license, procedure } => {
             let version = catalog::version_for(&license, &procedure)?;
@@ -178,12 +188,12 @@ fn main() -> Result<()> {
             license,
             procedure,
             topics,
-            limit,
+            length,
             retention,
         } => {
             let version = catalog::version_for(&license, &procedure)?;
             ensure_imported(&conn, &version)?;
-            study(&mut conn, &version, limit, retention, &topics, true)?;
+            study(&mut conn, &version, length, retention, &topics, true)?;
         }
         Command::StatsForLicense { license, procedure } => {
             let version = catalog::version_for(&license, &procedure)?;
@@ -198,15 +208,15 @@ fn main() -> Result<()> {
         Command::Study {
             version,
             topics,
-            limit,
+            length,
             retention,
-        } => study(&mut conn, &version, limit, retention, &topics, false)?,
+        } => study(&mut conn, &version, length, retention, &topics, false)?,
         Command::Review {
             version,
             topics,
-            limit,
+            length,
             retention,
-        } => study(&mut conn, &version, limit, retention, &topics, true)?,
+        } => study(&mut conn, &version, length, retention, &topics, true)?,
         Command::Topics { version } => topics(&conn, &version)?,
         Command::Stats { version } => stats(&conn, &version)?,
         Command::ExportAnki {
@@ -257,35 +267,50 @@ fn prompt(message: &str) -> Result<String> {
 fn study(
     conn: &mut Connection,
     version: &str,
-    limit: usize,
+    length: StudyLength,
     retention: f32,
     selected_topics: &[i64],
     only_reviews: bool,
 ) -> Result<()> {
     ensure!(
-        limit > 0 && limit <= 200,
+        (1..=200).contains(&length.limit),
         "Il limite deve essere tra 1 e 200"
     );
     ensure!(
         retention.is_finite() && (0.70..=0.99).contains(&retention),
         "Retention tra 0.70 e 0.99"
     );
-    let cards = due_cards(conn, version, limit, selected_topics, only_reviews)?;
-    if cards.is_empty() {
-        println!("Nessuna domanda disponibile per il filtro scelto nel listato {version}.");
-        return Ok(());
+    let mut batch = if length.unlimited {
+        Vec::new()
+    } else {
+        due_cards(conn, version, length.limit, selected_topics, only_reviews)?
     }
+    .into_iter();
+    let total = batch.len();
     let mut correct_count = 0usize;
     let mut answered_count = 0usize;
 
-    for (index, card) in cards.iter().enumerate() {
-        println!(
-            "\n[{}/{}] {} – {}",
-            index + 1,
-            cards.len(),
-            card.id,
-            card.topic
-        );
+    loop {
+        let next = if length.unlimited {
+            due_cards(conn, version, 1, selected_topics, only_reviews)?.pop()
+        } else {
+            batch.next()
+        };
+        let Some(card) = next else {
+            if answered_count == 0 || length.unlimited {
+                println!("Nessuna domanda disponibile per il filtro scelto nel listato {version}.");
+            }
+            if answered_count == 0 {
+                return Ok(());
+            }
+            break;
+        };
+        let number = answered_count + 1;
+        if length.unlimited {
+            println!("\n[{number}] {} – {}", card.id, card.topic);
+        } else {
+            println!("\n[{number}/{total}] {} – {}", card.id, card.topic);
+        }
         println!("{}", card.text);
         if let Some(figure) = &card.figure {
             println!("Figura: {figure} (aprila nella directory public/ del dataset)");
