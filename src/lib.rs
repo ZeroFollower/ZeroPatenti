@@ -1,4 +1,5 @@
 pub mod catalog;
+pub mod datasets;
 pub mod exam;
 pub mod review;
 pub mod storage;

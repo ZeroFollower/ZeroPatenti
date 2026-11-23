@@ -22,6 +22,14 @@ def normalize(pdf_path, destination):
         raise ValueError("PDF non riconosciuto: controllare fonte ed edizione")
     version = pin["versione"]
     expected_count = pin["exam"]["row_count"]
+    output = destination / "questions.json"
+    renamed = destination / "AB2020.json"
+    if renamed.exists():
+        if version != "AB-7020" or output.exists():
+            raise ValueError("La cartella di destinazione contiene già un altro listato")
+        output = renamed
+    elif version == "AB-7020" and destination.resolve().name == "AB-2024" and not output.exists():
+        output = renamed
     figures = destination / "figures"
     figures.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -112,7 +120,7 @@ def normalize(pdf_path, destination):
         checksum.update((body + "\n").encode("utf-8"))
     if checksum.hexdigest() != pin["exam"]["digest"]:
         raise ValueError("Il contenuto normalizzato differisce dall’edizione verificata")
-    (destination / "questions.json").write_text(
+    output.write_text(
         json.dumps({"domande": rows}, ensure_ascii=False), encoding="utf-8")
     print(f"{version}: {len(rows)} domande, {len(full_titles)} argomenti, {len(figure_paths)} figure")
 

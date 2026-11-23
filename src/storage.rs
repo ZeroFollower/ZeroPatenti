@@ -125,6 +125,7 @@ pub fn init_database(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_review_card ON review_log(card_id, reviewed_at);",
     )?;
     conn.execute_batch(STUDY_NOTES_SCHEMA)?;
+    crate::datasets::migrate(conn)?;
     crate::exam::catalog::migrate(conn)?;
     crate::exam::store::migrate(conn)?;
     Ok(())

@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+fn folder_picker_accepts_renamed_list_and_rejects_ambiguous_packages() -> Result<()> {
+    use crate::gui::banks::questions_in;
+    use std::fs;
+    let dir = std::env::temp_dir().join(format!("zp-picker-{}-{}", std::process::id(), now()));
+    fs::create_dir(&dir)?;
+    let renamed = dir.join("AB2020.json");
+    fs::write(&renamed, r#"{"domande":[]}"#)?;
+    fs::write(dir.join("manifest.json"), "{}")?;
+    assert_eq!(questions_in(&dir)?, renamed);
+    fs::write(dir.join("questions.csv"), "")?;
+    assert!(questions_in(&dir).is_err());
+    fs::remove_dir_all(dir)?;
+    Ok(())
+}
+
+#[test]
 fn signed_bank_checks_manifest_figures_and_persisted_origin() -> Result<()> {
     use ed25519_dalek::{Signer, SigningKey};
     use sha2::{Digest, Sha256};
@@ -168,5 +184,41 @@ fn archive_preview_protects_progress_current_editions_and_external_files() -> Re
     }
     drop((timer, ui, state));
     fs::remove_dir_all(dir)?;
+    Ok(())
+}
+
+#[test]
+fn ab_catalog_moves_the_default_and_warns_on_each_older_selection() -> Result<()> {
+    use crate::datasets;
+    slint::platform::set_platform(Box::new(TestPlatform))?;
+    let tmp = tempfile::tempdir()?;
+    let dir = tmp.path().join("DB");
+    std::fs::create_dir(&dir)?;
+    let controller = Controller::open(&tmp.path().join("progressi.sqlite3"))?;
+    let (ui, state, _timer) = super::super::bind(controller)?;
+    assert_eq!(ui.get_active_version().as_str(), datasets::AB);
+    for year in [2027, 2028] {
+        // Catalog discovery reads filenames without importing or downloading the edition.
+        std::fs::write(dir.join(format!("AB_{year}.sqlite3")), [])?;
+        state.borrow_mut().bank_management(&ui)?;
+        assert_eq!(ui.get_active_version().as_str(), datasets::edition(year));
+        assert!(ui.get_edition_warning().is_empty());
+        let entries = ui.get_bank_list();
+        for previous in [2024, 2026, 2027].into_iter().filter(|&old| old < year) {
+            let version = datasets::edition(previous);
+            assert!(
+                entries
+                    .iter()
+                    .any(|entry| entry.key == version && entry.label.contains("Obsoleto"))
+            );
+            ui.invoke_open_entry("bank".into(), version.into());
+            assert_eq!(
+                ui.get_edition_warning().as_str(),
+                datasets::warning(previous, year)
+            );
+        }
+        ui.invoke_open_entry("bank".into(), datasets::edition(year).into());
+        assert!(ui.get_edition_warning().is_empty());
+    }
     Ok(())
 }

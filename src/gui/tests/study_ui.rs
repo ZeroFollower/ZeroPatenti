@@ -45,8 +45,13 @@ fn searching_and_toggling_a_topic_preserves_the_session_configuration() -> Resul
         &csv,
         "id,quesito_id,argomento_id,argomento_nome,testo,risposta\n1,1,1,Divieti,A,VERO\n2,2,2,Precedenze,B,FALSO\n",
     )?;
-    storage::import_file(&mut c.db, "AB-7020", &csv)?;
-    let (ui, state, timer) = bind(c)?;
+    storage::import_file(&mut c.db, crate::datasets::AB, &csv)?;
+    // This pointer-layout test uses a local fixture, independently of GitHub availability.
+    c.study_edition = Some((
+        crate::datasets::LEGACY.to_owned(),
+        crate::datasets::AB.to_owned(),
+    ));
+    let (ui, state, timer) = crate::gui::bind(c)?;
     ui.invoke_act("onboarding-undecided".into());
     ui.invoke_act("study-setup".into());
     ui.set_count(7);

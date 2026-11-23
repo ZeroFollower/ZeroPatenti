@@ -41,6 +41,9 @@ class BankCompatibility(unittest.TestCase):
             (root / "data/listati.json").write_text(json.dumps({"listati": [pin]}))
             with patch.object(normalize_bank, "__file__", str(root / "scripts/normalize_bank.py")):
                 normalize_bank.normalize(pdf, root / "out")
+                normalize_bank.normalize(pdf, root / "AB-2024")
+            self.assertEqual((root / "AB-2024/AB2020.json").read_bytes(), (root / "out/questions.json").read_bytes())
+            self.assertFalse((root / "AB-2024/questions.json").exists())
             rows = json.loads((root / "out/questions.json").read_text(encoding="utf-8"))["domande"]
             self.assertEqual([list(row.values()) for row in rows], expected)
 

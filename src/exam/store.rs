@@ -1,4 +1,4 @@
-use super::catalog::{official_quotas, verified_rule};
+use super::catalog::official_quotas;
 use super::selection::{self, Candidate, Strategy};
 use anyhow::{Result, ensure};
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
@@ -128,16 +128,38 @@ pub fn create(
     seed: u64,
     now: i64,
 ) -> Result<String> {
+    let version = crate::catalog::version_for(license, procedure)?;
+    let preferred = if version == crate::datasets::LEGACY {
+        crate::datasets::edition(crate::datasets::latest_installed(conn)?.unwrap_or(2026))
+    } else {
+        version
+    };
+    create_for(conn, license, procedure, &preferred, config, seed, now)
+}
+
+pub fn create_for(
+    conn: &mut Connection,
+    license: &str,
+    procedure: &str,
+    version: &str,
+    config: &Config,
+    seed: u64,
+    now: i64,
+) -> Result<String> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let rule = verified_rule(&tx, license, procedure)?;
+    let rule = crate::exam::catalog::verified_rule_for(&tx, license, procedure, version)?;
+    // In the PDF the printed block prefix 11..35 identifies the 25 exam chapters.
+    // Its editorial topic IDs are kept for ordinary study and custom exams.
+    let printed_chapters = crate::datasets::year_of_version(version).is_some() && version!=crate::datasets::LEGACY
+        && matches!(config,Config::Official) && tx.query_row("SELECT NOT EXISTS(SELECT 1 FROM questions WHERE source_version=? AND group_id / 1000 NOT BETWEEN 11 AND 35)",[version],|r|r.get::<_,bool>(0))?;
     let candidates = tx
         .prepare(
-            "SELECT q.card_id,q.topic_id,s.due_at,
+            "SELECT q.card_id,CASE WHEN ?2 THEN q.group_id / 1000 - 10 ELSE q.topic_id END,s.due_at,
                 (SELECT COUNT(*) FROM review_log r WHERE r.card_id=q.card_id AND r.answer_correct=0)
          FROM questions q LEFT JOIN card_state s ON q.card_id=s.card_id
          WHERE q.source_version=?1 ORDER BY q.card_id",
         )?
-        .query_map([&rule.bank_version], |r| {
+        .query_map(params![rule.bank_version,printed_chapters], |r| {
             Ok(Candidate {
                 id: r.get(0)?,
                 topic_id: r.get(1)?,
@@ -537,7 +559,15 @@ mod tests {
             strategy: Strategy::Balanced,
             timed,
         };
-        create(conn, "B", "conseguimento", &cfg, u64::MAX, 100)
+        create_for(
+            conn,
+            "B",
+            "conseguimento",
+            crate::datasets::LEGACY,
+            &cfg,
+            u64::MAX,
+            100,
+        )
     }
 
     fn event_count(conn: &Connection, kind: &str) -> Result<i64> {
@@ -627,7 +657,15 @@ mod tests {
             }
         }
         super::super::catalog::trust_fixture(&db, "B", "conseguimento")?;
-        let id = create(&mut db, "B", "conseguimento", &Config::Official, 42, 100)?;
+        let id = create_for(
+            &mut db,
+            "B",
+            "conseguimento",
+            crate::datasets::LEGACY,
+            &Config::Official,
+            42,
+            100,
+        )?;
         let v = view(&db, &id)?;
         assert_eq!(
             (v.questions.len(), v.threshold, v.remaining_ms),

@@ -80,7 +80,11 @@ pub fn print() -> Result<()> {
             item.patenti.join(", "),
             item.procedura,
             item.nome,
-            item.versione,
+            if item.versione == crate::datasets::LEGACY {
+                "AB_<anno>.sqlite3 più recente"
+            } else {
+                &item.versione
+            },
             if item.pronto {
                 "selezionabile"
             } else {

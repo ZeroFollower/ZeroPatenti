@@ -99,8 +99,20 @@ fn no_scheduled_cards(reviews_only: bool) -> &'static str {
     }
 }
 
+struct DatasetDownload {
+    receiver: std::sync::mpsc::Receiver<Result<crate::datasets::Resolved>>,
+    version: String,
+    action: String,
+    page: String,
+}
+
 struct Controller {
     db: Connection,
+    dataset_dir: PathBuf,
+    latest_year: u16,
+    offline_year: Option<u16>,
+    study_edition: Option<(String, String)>,
+    fetching: Option<DatasetDownload>,
     pending_import: Option<banks::ImportSelection>,
     pending_archive: Option<Vec<banks::ArchivedEdition>>,
     _instance: std::fs::File,
@@ -143,6 +155,16 @@ impl Controller {
         store::recover(&mut db, now())?;
         Ok(Self {
             db,
+            #[cfg(not(target_os = "android"))]
+            dataset_dir: crate::datasets::folder(path),
+            #[cfg(target_os = "android")]
+            dataset_dir: crate::android::import_dir()
+                .map(|import| import.with_file_name("DB"))
+                .unwrap_or_else(|| crate::datasets::folder(path)),
+            latest_year: 2026,
+            offline_year: None,
+            study_edition: None,
+            fetching: None,
             pending_import: None,
             pending_archive: None,
             _instance: instance,
@@ -161,6 +183,82 @@ impl Controller {
             study_index: 0,
             study_furthest: 0,
         })
+    }
+
+    fn fetch_dataset(&mut self, ui: &AppWindow, action: &str) -> Result<()> {
+        if let Some(task) = self.fetching.as_mut()
+            && task.version == self.version
+        {
+            task.action = action.to_owned();
+            task.page = ui.get_page().to_string();
+            ui.set_notice("Download del dataset in corso.".into());
+            return Ok(());
+        }
+        let dir = self.dataset_dir.clone();
+        let version = self.version.clone();
+        let installed = crate::datasets::latest_installed(&self.db)?;
+        let requested = self
+            .study_edition
+            .as_ref()
+            .filter(|(_, v)| v == &self.version)
+            .and_then(|(_, v)| crate::datasets::year_of_version(v));
+        let (send, receiver) = std::sync::mpsc::channel();
+        self.fetching = Some(DatasetDownload {
+            receiver,
+            version: version.clone(),
+            action: action.to_owned(),
+            page: ui.get_page().to_string(),
+        });
+        std::thread::spawn(move || {
+            let _ = send.send(crate::datasets::resolve(&dir, installed, requested));
+        });
+        ui.set_notice(
+            format!(
+                "Preparazione del dataset {}…",
+                crate::datasets::label(&self.version)
+            )
+            .into(),
+        );
+        Ok(())
+    }
+
+    fn finish_download(&mut self, ui: &AppWindow) -> Result<()> {
+        let Some(task) = &self.fetching else {
+            return Ok(());
+        };
+        let result = match task.receiver.try_recv() {
+            Ok(r) => r,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(()),
+            Err(_) => Err(anyhow::anyhow!("Il download è stato interrotto")),
+        };
+        let task = self.fetching.take().unwrap();
+        let resolved = result?;
+        crate::datasets::remember_published(&mut self.db, resolved.published.as_deref())?;
+        self.latest_year = self.latest_year.max(resolved.latest);
+        let version = crate::datasets::edition(resolved.year);
+        let new = crate::datasets::installed_digest(&self.db, &version)?.is_none();
+        if new && let Some(path) = resolved.path {
+            crate::datasets::import(&mut self.db, &path)?;
+        }
+        if self.version == task.version && ui.get_page().as_str() == task.page {
+            if self.study_edition.is_none() {
+                self.offline_year = resolved.published.is_none().then_some(resolved.year);
+            }
+            if new || self.version != version || task.action == "dataset-ready" {
+                self.bank(ui)?;
+            }
+            self.perform(ui, &task.action)?;
+            if resolved.published.is_none() {
+                ui.set_notice(
+                    format!(
+                        "GitHub non raggiungibile. Edizione disponibile offline: A/B {}.",
+                        resolved.year
+                    )
+                    .into(),
+                );
+            }
+        }
+        Ok(())
     }
 
     fn refresh_dashboard_if_needed(
@@ -241,18 +339,72 @@ impl Controller {
         Ok(())
     }
 
+    fn edition_warning(&self, ui: &AppWindow, version: &str) {
+        let warning = crate::datasets::year_of_version(version)
+            .filter(|y| *y < self.latest_year)
+            .map(|y| crate::datasets::warning(y, self.latest_year))
+            .unwrap_or_default();
+        ui.set_edition_warning(warning.into());
+    }
+
     fn bank(&mut self, ui: &AppWindow) -> Result<()> {
-        self.version = catalog::version_for(&ui.get_license(), &ui.get_procedure())?;
+        let base = catalog::version_for(&ui.get_license(), &ui.get_procedure())?;
+        self.latest_year = self
+            .latest_year
+            .max(crate::datasets::known_latest(&self.db, &self.dataset_dir)?);
+        let latest = crate::datasets::edition(self.latest_year);
+        self.version = self
+            .study_edition
+            .as_ref()
+            .filter(|(parent, _)| parent == &base)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_else(|| {
+                if base == crate::datasets::LEGACY {
+                    self.offline_year
+                        .map(crate::datasets::edition)
+                        .unwrap_or_else(|| latest.clone())
+                } else {
+                    base.clone()
+                }
+            });
+        self.edition_warning(ui, &self.version);
+        ui.set_ab_edition(crate::datasets::year_of_version(&self.version).is_some());
         let topics = storage::topic_counts(&self.db, &self.version)?;
         self.refresh_dashboard(ui, Local::now())?;
         let total = ui.get_total();
         ui.set_active_version(self.version.as_str().into());
-        ui.set_bank(format!("{} · {total} domande", self.version).into());
+        ui.set_bank(
+            format!(
+                "{} · {total} domande",
+                crate::datasets::label(&self.version)
+            )
+            .into(),
+        );
         let mut entries = Vec::new();
         let mut counts = self
             .db
             .prepare("SELECT COUNT(*) FROM questions WHERE source_version=?")?;
         for edition in catalog::load()?.listati.into_iter().filter(|e| e.pronto) {
+            if edition.versione == crate::datasets::LEGACY {
+                for year in crate::datasets::available_years(&self.db, &self.dataset_dir)?
+                    .into_iter()
+                    .rev()
+                {
+                    let version = crate::datasets::edition(year);
+                    let count: i64 = counts.query_row([&version], |r| r.get(0))?;
+                    let status = if year < self.latest_year {
+                        " · Obsoleto"
+                    } else {
+                        " · Predefinito"
+                    };
+                    entries.push(Entry {
+                        label: format!("A/B conseguimento {year}{status} · {count} domande locali")
+                            .into(),
+                        key: version.into(),
+                    });
+                }
+                continue;
+            }
             let count: i64 = counts.query_row([&edition.versione], |r| r.get(0))?;
             let status = if count == 0 {
                 "Da importare".to_owned()
@@ -263,6 +415,25 @@ impl Controller {
                 label: format!("{} · {status}", edition.nome).into(),
                 key: edition.versione.into(),
             });
+        }
+        for version in self
+            .db
+            .prepare("SELECT version FROM dataset_imports ORDER BY version")?
+            .query_map([], |r| r.get::<_, String>(0))?
+        {
+            let version = version?;
+            if !entries.iter().any(|e| e.key.as_str() == version) {
+                entries.push(Entry {
+                    label: if let Some(y) =
+                        crate::datasets::year_of_version(&version).filter(|y| *y < self.latest_year)
+                    {
+                        format!("A/B {y} · Obsoleto").into()
+                    } else {
+                        version.as_str().into()
+                    },
+                    key: version.into(),
+                });
+            }
         }
         ui.set_bank_list(model(entries));
         self.topic_ids = topics.iter().map(|t| t.id).collect();
@@ -326,7 +497,12 @@ impl Controller {
         ui.set_official_count(0);
         ui.set_official_minutes(0);
         let hint = (|| -> Result<String> {
-            let rule = verified_rule(&self.db, &ui.get_license(), &ui.get_procedure())?;
+            let rule = crate::exam::catalog::verified_rule_for(
+                &self.db,
+                &ui.get_license(),
+                &ui.get_procedure(),
+                &self.version,
+            )?;
             ui.set_official_count(i32::try_from(rule.question_count)?);
             ui.set_official_minutes(i32::try_from(rule.duration_seconds / 60)?);
             let official = crate::exam::catalog::official_quotas(&rule.bank_version).is_some();
@@ -383,10 +559,11 @@ impl Controller {
             }
         };
         let seed: i64 = self.db.query_row("SELECT random()", [], |row| row.get(0))?;
-        let id = store::create(
+        let id = store::create_for(
             &mut self.db,
             &ui.get_license(),
             &ui.get_procedure(),
+            &self.version,
             &config,
             seed as u64,
             now(),
@@ -606,6 +783,7 @@ impl Controller {
 
     fn show_exam(&mut self, ui: &AppWindow) -> Result<()> {
         let s = self.session.as_ref().context("Nessuna prova aperta")?;
+        self.edition_warning(ui, &s.bank_version);
         match s.status.as_str() {
             "submitted" => return self.show_result(ui, &s.id),
             "cancelled" => return self.home(ui),
@@ -656,6 +834,12 @@ impl Controller {
 
     fn show_result(&self, ui: &AppWindow, id: &str) -> Result<()> {
         let correction = result::correction(&self.db, id, ui.get_errors_only())?;
+        let version: String = self.db.query_row(
+            "SELECT bank_version FROM exam_sessions WHERE session_id=?",
+            [id],
+            |r| r.get(0),
+        )?;
+        self.edition_warning(ui, &version);
         ui.set_page("result".into());
         ui.set_title_text("Risultato della prova".into());
         ui.set_subtitle(correction.summary().into());
@@ -858,10 +1042,10 @@ impl Controller {
                     .file_name()
                     .and_then(|n| n.to_str())
                     .is_some_and(|n| n.starts_with("listato-"))
-                && matches!(
-                    file.file_name().and_then(|n| n.to_str()),
-                    Some("questions.csv" | "questions.json")
-                ),
+                && file
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|name| banks::QUESTION_FILES.contains(&name)),
             "Percorso di importazione non valido"
         );
         let result = self.stage_bank(ui, &file, incoming);
@@ -959,6 +1143,7 @@ impl Controller {
             self.rule(ui);
         }
         ui.set_page(page.into());
+        self.edition_warning(ui, &self.version);
         if page == "import" {
             return self.bank_management(ui);
         }
@@ -990,10 +1175,34 @@ impl Controller {
     }
 
     fn switch_bank(&mut self, ui: &AppWindow, version: &str) -> Result<()> {
+        let catalog_version = if crate::datasets::year_of_version(version).is_some() {
+            crate::datasets::LEGACY
+        } else {
+            version
+        };
+        let known = catalog::load()?
+            .listati
+            .iter()
+            .any(|b| b.versione == catalog_version && b.pronto);
+        if !known {
+            storage::ensure_imported(&self.db, version)?;
+            let base = catalog::version_for(&ui.get_license(), &ui.get_procedure())?;
+            self.study_edition = Some((base, version.to_owned()));
+            return self.refresh_bank(ui);
+        }
+        self.latest_year = self
+            .latest_year
+            .max(crate::datasets::known_latest(&self.db, &self.dataset_dir)?);
+        self.study_edition = if version == crate::datasets::edition(self.latest_year) {
+            self.offline_year = None;
+            None
+        } else {
+            Some((catalog_version.to_owned(), version.to_owned()))
+        };
         let edition = catalog::load()?
             .listati
             .into_iter()
-            .find(|e| e.pronto && e.versione == version)
+            .find(|e| e.pronto && e.versione == catalog_version)
             .context("Listato non disponibile")?;
         let license = if edition
             .patenti
@@ -1013,7 +1222,11 @@ impl Controller {
         };
         ui.set_license(license);
         ui.set_procedure(edition.procedura.into());
-        self.refresh_bank(ui)
+        self.refresh_bank(ui)?;
+        if !ui.get_edition_warning().is_empty() {
+            ui.set_notice(ui.get_edition_warning());
+        }
+        Ok(())
     }
 
     fn refresh_bank(&mut self, ui: &AppWindow) -> Result<()> {
@@ -1034,7 +1247,33 @@ impl Controller {
     }
 
     fn act(&mut self, ui: &AppWindow, action: &str) -> Result<()> {
+        if matches!(
+            action,
+            "simulation"
+                | "official"
+                | "custom"
+                | "study-setup"
+                | "study-start"
+                | "study-continuous"
+                | "review"
+                | "start"
+                | "get-dataset"
+        ) && crate::datasets::year_of_version(&self.version).is_some()
+            && (self
+                .study_edition
+                .as_ref()
+                .is_none_or(|(_, v)| v != &self.version)
+                || !crate::datasets::installed(&self.db, &self.version)?)
+        {
+            return self.fetch_dataset(ui, action);
+        }
+        self.perform(ui, action)
+    }
+
+    fn perform(&mut self, ui: &AppWindow, action: &str) -> Result<()> {
         match action {
+            "dataset-ready" => Ok(()),
+            "get-dataset" => self.bank_management(ui),
             "select-all" | "select-none" => {
                 let chosen = action == "select-all";
                 let topics = ui.get_topics();
@@ -1191,8 +1430,10 @@ fn bind(mut controller: Controller) -> Result<(AppWindow, Rc<RefCell<Controller>
     ui.set_stats_bank(controller.version.as_str().into());
     ui.set_stats_topic("Tutti".into());
     #[cfg(target_os = "android")]
-    if let Some(dir) = crate::android::import_dir() {
-        ui.set_import_path(dir.join("questions.json").to_string_lossy().as_ref().into());
+    if let Some(dir) = crate::android::import_dir()
+        && let Ok(file) = banks::questions_in(&dir)
+    {
+        ui.set_import_path(file.to_string_lossy().as_ref().into());
     }
     let state = Rc::new(RefCell::new(controller));
     let (weak, data) = (ui.as_weak(), state.clone());
@@ -1243,6 +1484,18 @@ fn bind(mut controller: Controller) -> Result<(AppWindow, Rc<RefCell<Controller>
         ui.set_confirm_cancel(false);
         ui.set_errors_only(false);
         let res = (|| {
+            if kind == "dataset" {
+                let file = crate::datasets::scan(&c.dataset_dir)?
+                    .into_iter()
+                    .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(id.as_str()))
+                    .context("Dataset non più disponibile")?;
+                let version = crate::datasets::import(&mut c.db, &file)?;
+                c.switch_bank(&ui, &version)?;
+                ui.set_notice(
+                    format!("Dataset importato. {}", crate::datasets::label(&version)).into(),
+                );
+                return Ok(());
+            }
             if kind == "bank" {
                 return c.switch_bank(&ui, &id);
             }
@@ -1292,6 +1545,7 @@ fn bind(mut controller: Controller) -> Result<(AppWindow, Rc<RefCell<Controller>
         for file in crate::android::take_banks() {
             feedback(&ui, c.receive_bank(&ui, &file));
         }
+        feedback(&ui, c.finish_download(&ui));
         if c.clock.is_some() || c.pending_pause.is_some() {
             feedback(&ui, c.tick(&ui));
         } else if ui.get_page() == "home" {
@@ -1315,6 +1569,9 @@ fn bind(mut controller: Controller) -> Result<(AppWindow, Rc<RefCell<Controller>
 
 pub fn run(path: &Path) -> Result<()> {
     let (ui, state, _timer) = bind(Controller::open(path)?)?;
+    if crate::datasets::year_of_version(&state.borrow().version).is_some() {
+        state.borrow_mut().fetch_dataset(&ui, "dataset-ready")?;
+    }
     #[cfg(not(target_os = "android"))]
     {
         use slint::winit_030::{EventResult, WinitWindowAccessor, winit::event::WindowEvent};

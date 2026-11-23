@@ -1,4 +1,13 @@
 use super::*;
+
+// These fixtures exercise historical AB-7020 progress and signed JSON packages.
+fn bind(mut controller: Controller) -> Result<(AppWindow, Rc<RefCell<Controller>>, Timer)> {
+    controller.study_edition = Some((
+        crate::datasets::LEGACY.into(),
+        crate::datasets::LEGACY.into(),
+    ));
+    super::bind(controller)
+}
 mod banks;
 mod continuous;
 mod profile;

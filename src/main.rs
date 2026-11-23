@@ -15,8 +15,8 @@ use zeropatenti::{
 #[derive(Parser)]
 #[command(name = "zeropatenti", about = "Quiz per le patenti italiane")]
 struct Cli {
-    #[arg(long, global = true, default_value = "patenti.sqlite3")]
-    db: PathBuf,
+    #[arg(long, global = true)]
+    db: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -143,10 +143,65 @@ enum Command {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let mut conn = Connection::open(&cli.db)
-        .with_context(|| format!("Impossibile aprire {}", cli.db.display()))?;
+    let profile = cli
+        .db
+        .map(Ok)
+        .unwrap_or_else(zeropatenti::datasets::desktop_profile)?;
+    let mut conn = Connection::open(&profile)
+        .with_context(|| format!("Impossibile aprire {}", profile.display()))?;
     init_database(&conn)?;
 
+    let for_license = |db: &mut Connection, license: &str, procedure: &str| -> Result<String> {
+        let base = catalog::version_for(license, procedure)?;
+        use zeropatenti::datasets as banks;
+        if base != banks::LEGACY {
+            return Ok(base);
+        }
+        let latest = banks::resolve(&banks::folder(&profile), banks::latest_installed(db)?, None)?;
+        banks::remember_published(db, latest.published.as_deref())?;
+        let known = banks::known_latest(db, &banks::folder(&profile))?;
+        if latest.year < known {
+            eprintln!("{}", banks::warning(latest.year, known));
+        }
+        if latest.published.is_none() {
+            eprintln!(
+                "GitHub non raggiungibile. Uso il dataset locale A/B {}.",
+                latest.year
+            );
+        }
+        let version = banks::edition(latest.year);
+        if let Some(file) = latest.path
+            && banks::installed_digest(db, &version)?.is_none()
+        {
+            banks::import(db, &file)
+        } else {
+            Ok(version)
+        }
+    };
+    let explicit = match &cli.command {
+        Command::Study { version, .. }
+        | Command::Review { version, .. }
+        | Command::Topics { version }
+        | Command::Stats { version }
+        | Command::ExportAnki { version, .. }
+        | Command::ImportCsv { version, .. }
+        | Command::ImportJson { version, .. } => zeropatenti::datasets::year_of_version(version),
+        Command::ImportForLicense {
+            license, procedure, ..
+        } => (catalog::version_for(license, procedure)? == zeropatenti::datasets::LEGACY)
+            .then_some(2024),
+        _ => None,
+    };
+    if let Some(year) = explicit {
+        use zeropatenti::datasets as banks;
+        if let Ok(years) = banks::published_years() {
+            banks::remember_published(&mut conn, Some(&years))?;
+        }
+        let latest = banks::known_latest(&conn, &banks::folder(&profile))?;
+        if year < latest {
+            eprintln!("{}", banks::warning(year, latest));
+        }
+    }
     match cli.command {
         Command::Catalog => catalog::print()?,
         Command::ImportForLicense {
@@ -176,12 +231,12 @@ fn main() -> Result<()> {
             length,
             retention,
         } => {
-            let version = catalog::version_for(&license, &procedure)?;
+            let version = for_license(&mut conn, &license, &procedure)?;
             ensure_imported(&conn, &version)?;
             study(&mut conn, &version, length, retention, &topics, false)?;
         }
         Command::TopicsForLicense { license, procedure } => {
-            let version = catalog::version_for(&license, &procedure)?;
+            let version = for_license(&mut conn, &license, &procedure)?;
             topics(&conn, &version)?;
         }
         Command::ReviewForLicense {
@@ -191,12 +246,12 @@ fn main() -> Result<()> {
             length,
             retention,
         } => {
-            let version = catalog::version_for(&license, &procedure)?;
+            let version = for_license(&mut conn, &license, &procedure)?;
             ensure_imported(&conn, &version)?;
             study(&mut conn, &version, length, retention, &topics, true)?;
         }
         Command::StatsForLicense { license, procedure } => {
-            let version = catalog::version_for(&license, &procedure)?;
+            let version = for_license(&mut conn, &license, &procedure)?;
             stats(&conn, &version)?;
         }
         Command::ImportJson { file, version } => {

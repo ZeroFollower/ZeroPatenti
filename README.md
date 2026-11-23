@@ -38,14 +38,18 @@ separato, `A1/A2/A/B1/B/BE` condividono il listato `A/B`, e i listati
 di **revisione** non vengono mai mescolati al conseguimento.
 
 Il catalogo versionato si trova in [`data/listati.json`](data/listati.json).
+Per il conseguimento A/B, ZeroPatenti confronta gli anni nei nomi `AB_<anno>.sqlite3` presenti nella cartella `DB`, nel [catalogo su GitHub](https://github.com/lucatortiglione/ZeroPatenti/tree/main/DB) e fra le edizioni già importate. Per ogni nuova simulazione seleziona l’anno più recente, scarica il dataset se necessario e verifica che corrisponda al file pubblicato. Senza connessione usa l’edizione disponibile in locale e segnala la modalità offline. Le edizioni precedenti restano selezionabili con l’avviso **obsoleto**. Per pubblicare un aggiornamento aggiungi un dataset con una sola edizione alla cartella `DB` su `main`, ad esempio `DB/AB_2027.sqlite3`. GitHub Actions aggiorna automaticamente gli stati nell’indice.
+
+In **Banche dati** l’app rileva i file SQLite presenti in `DB` accanto al profilo. Seleziona **Importa** accanto al nome per importare le domande. Sono supportati i dataset ZeroPatenti con una sola edizione nella tabella `questions`. Le immagini possono essere incorporate oppure trovarsi in `DB/<nome del dataset>/figures/`. I progressi di altri utenti non vengono importati.
+
+Il profilo personale si chiama `progressi.sqlite3`. Le installazioni con un precedente `patenti.sqlite3` possono continuare a usarlo. L’opzione desktop `--db` sceglie un profilo specifico. Su Android il profilo resta nella cartella privata dell’app. Nel database attivo, `card_state` contiene lo stato di ogni domanda valutata e `review_log` lo storico dei ripassi.
 Le patenti superiori e le CQC rimangono non selezionabili finché non saranno
 validati i filtri dei sottoinsiemi per categoria.
 
 ```bash
 cargo run -- catalog
 
-# Seleziona automaticamente AB-7020 per la patente B
-cargo run -- import-for-license data/questions.json --license B
+# Seleziona e prepara automaticamente il dataset A/B più recente per la patente B
 cargo run -- study-for-license --license B --limit 30
 cargo run -- stats-for-license --license B
 
@@ -74,7 +78,7 @@ Per gli editori, lo script seguente richiede Python 3.11+ e OpenSSL 3. La chiave
 python scripts/sign_bank.py banca --version AB-7020 --private-key /percorso/privato/editore.pem
 ```
 
-Su Android usa **Scegli la cartella del listato** per selezionare la cartella contenente `questions.json` e `figures/`, poi premi **Importa**. L'app conserva una copia privata. Per generare l'APK di sviluppo usa JDK 21, SDK Android 35 e NDK r30. Imposta `JAVA_HOME`, `ANDROID_HOME` e `ANDROID_NDK_ROOT` sulle rispettive cartelle:
+Su Android usa **Scegli la cartella del listato** per selezionare `AB-2024` con `AB2020.json` e `figures/`, poi premi **Importa**. Sono supportati anche i pacchetti con `questions.json` o `questions.csv`. L'app conserva una copia privata. Per generare l'APK di sviluppo usa JDK 21, SDK Android 35 e NDK r30. Imposta `JAVA_HOME`, `ANDROID_HOME` e `ANDROID_NDK_ROOT` sulle rispettive cartelle:
 
 ```bash
 rustup target add aarch64-linux-android
@@ -107,8 +111,8 @@ Vedi [Politica aggiornamenti](docs/POLITICA_AGGIORNAMENTI.md).
 cargo check
 cargo test
 
-# Import del JSON di simulatore-quiz-patente
-cargo run -- import-json /percorso/questions.json --version AB-7020
+# Import del pacchetto locale A/B
+cargo run -- import-json data/AB-2024/AB2020.json --version AB-7020
 
 # Oppure import da CSV, con esempio incluso
 cargo run -- import-csv examples/domande_demo.csv --version DEMO
@@ -123,7 +127,7 @@ cargo run -- stats --version DEMO
 cargo run -- export-anki --version DEMO patenti.tsv
 ```
 
-Il JSON A/B contiene 7.020 affermazioni con campi `id`, `quesito_id`, `argomento_id`, `argomento_nome`, `testo`, `risposta` e `figura` (opzionale): <https://github.com/matteotarantino-algor/simulatore-quiz-patente>. Il database completo **non è incluso** in questo repository: i listati ufficiali e i relativi diritti/condizioni d'uso devono essere verificati alla fonte.
+Il JSON A/B contiene 7.020 affermazioni con campi `id`, `quesito_id`, `argomento_id`, `argomento_nome`, `testo`, `risposta` e `figura` (opzionale): <https://github.com/matteotarantino-algor/simulatore-quiz-patente>. I database SQLite pubblicati sono elencati nell’[indice delle edizioni A/B](DB/README.md).
 
 ## Struttura
 

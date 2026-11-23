@@ -78,14 +78,14 @@ public class BankActivity extends NativeActivity {
                             copy(tree, id, new File(dir, name));
                         } else if (Document.MIME_TYPE_DIR.equals(cursor.getString(2))) {
                             if ("figures".equals(name)) figuresId = id;
-                        } else if ("questions.json".equals(name) || "questions.csv".equals(name)) {
+                        } else if ("questions.json".equals(name) || "questions.csv".equals(name) || "AB2020.json".equals(name)) {
                             if (bank != null) throw new IOException("Seleziona una cartella con un solo listato");
                             bank = new File(dir, name);
                             copy(tree, id, bank);
                         }
                     }
                 }
-                if (bank == null) throw new IOException("La cartella deve contenere questions.json o questions.csv");
+                if (bank == null) throw new IOException("La cartella deve contenere questions.json, questions.csv o AB2020.json");
                 if (figuresId != null) {
                     String references = bankFigures(bank.getAbsolutePath());
                     if (references == null) throw new IOException("Listato illeggibile");

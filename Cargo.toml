@@ -30,6 +30,9 @@ rusqlite = { version = "0.43.0", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+tempfile = "3"
+sha1 = "0.10"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 tinyfiledialogs = { version = "3.9", default-features = false, optional = true }
@@ -44,6 +47,9 @@ strip = "split"
 java_sources = "android/java"
 package = "it.zeropatenti.app"
 build_targets = ["aarch64-linux-android", "x86_64-linux-android"]
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"
 
 [package.metadata.android.sdk]
 min_sdk_version = 26

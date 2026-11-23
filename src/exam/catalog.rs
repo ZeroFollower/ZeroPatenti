@@ -25,7 +25,7 @@ pub struct ExamRule {
 /// https://www.patente.it/upload/pdf/2014_03.pdf
 pub fn official_quotas(bank_version: &str) -> Option<&'static [usize]> {
     match bank_version {
-        "AB-7020" => Some(&[
+        v if crate::datasets::year_of_version(v).is_some() => Some(&[
             1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 2, 1, 1, 1, 1, 2, 1, 1, 1,
         ]),
         "AM-MIT-2025" => Some(&[3; 10]),
@@ -74,7 +74,7 @@ pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn bank_digest(conn: &Connection, version: &str) -> Result<String> {
+pub(crate) fn bank_digest(conn: &Connection, version: &str) -> Result<String> {
     let mut stmt = conn.prepare(
         "SELECT external_id,group_id,topic_id,topic,question_text,correct_answer,image_path,card_id
         FROM questions WHERE source_version=?1 ORDER BY external_id",
@@ -108,9 +108,26 @@ fn bank_digest(conn: &Connection, version: &str) -> Result<String> {
 /// Call inside the same transaction that reads and freezes the questions.
 pub fn verified_rule(conn: &Connection, license: &str, procedure: &str) -> Result<ExamRule> {
     let bank = crate::catalog::version_for(license, procedure)?;
+    verified_rule_for(conn, license, procedure, &bank)
+}
+
+pub fn verified_rule_for(
+    conn: &Connection,
+    license: &str,
+    procedure: &str,
+    selected: &str,
+) -> Result<ExamRule> {
+    let bank = crate::catalog::version_for(license, procedure)?;
+    let current_ab = bank == crate::datasets::LEGACY
+        && selected != crate::datasets::LEGACY
+        && crate::datasets::year_of_version(selected).is_some();
+    ensure!(
+        selected == bank || current_ab,
+        "Questa edizione è disponibile per studio e ripasso"
+    );
     let license = license.trim().to_ascii_uppercase();
     let procedure = procedure.trim().to_ascii_lowercase();
-    let rule = conn
+    let mut rule = conn
         .query_row(
             "SELECT version, source, valid_from, valid_until, question_count, max_errors, duration_seconds
              FROM exam_rules
@@ -135,6 +152,20 @@ pub fn verified_rule(conn: &Connection, license: &str, procedure: &str) -> Resul
         )
         .optional()?
         .context("Nessuna regola verificata per questa patente e procedura")?;
+    if current_ab {
+        ensure!(
+            bank_digest(conn, selected)?
+                == if selected == crate::datasets::AB {
+                    crate::datasets::AB_DIGEST.to_owned()
+                } else {
+                    crate::datasets::installed_digest(conn, selected)?
+                        .context("Edizione A/B non importata")?
+                },
+            "Il listato A/B non coincide con il dataset importato"
+        );
+        rule.bank_version = selected.to_owned();
+        return Ok(rule);
+    }
     let expected: String = conn
         .query_row(
             "SELECT digest FROM bank_attestations WHERE bank_version=?1",

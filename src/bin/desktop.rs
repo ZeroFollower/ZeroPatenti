@@ -12,18 +12,10 @@ struct Options {
 }
 
 fn main() -> Result<()> {
-    let db = Options::parse().db.unwrap_or_else(|| {
-        let local = PathBuf::from("patenti.sqlite3");
-        if local.exists() {
-            return local;
-        }
-        // A portable distribution may already include the user's database beside the executable.
-        std::env::current_exe()
-            .ok()
-            .map(|exe| exe.with_file_name("patenti.sqlite3"))
-            .filter(|db| db.is_file())
-            .unwrap_or(local)
-    });
+    let db = Options::parse()
+        .db
+        .map(Ok)
+        .unwrap_or_else(zeropatenti::datasets::desktop_profile)?;
     let result = zeropatenti::gui::run(&db);
     #[cfg(target_os = "windows")]
     if let Err(error) = &result {

@@ -35,6 +35,23 @@ struct VerifiedManifest {
     figures: BTreeMap<String, String>,
 }
 
+pub(super) const QUESTION_FILES: [&str; 3] = ["questions.json", "questions.csv", "AB2020.json"];
+
+pub(super) fn questions_in(dir: &Path) -> Result<PathBuf> {
+    let mut files = QUESTION_FILES
+        .iter()
+        .map(|name| dir.join(name))
+        .filter(|p| p.is_file());
+    let file = files
+        .next()
+        .context("La cartella deve contenere questions.json, questions.csv o AB2020.json")?;
+    ensure!(
+        files.next().is_none(),
+        "Scegli una cartella con un solo listato"
+    );
+    Ok(file)
+}
+
 fn parse_key(value: &str) -> Result<VerifyingKey> {
     let mut bytes = [0; 32];
     hex::decode_to_slice(value.trim(), &mut bytes)
@@ -152,7 +169,7 @@ impl Package {
                 "Versione del manifest incompatibile con {version}"
             );
             ensure!(
-                matches!(name, "questions.json" | "questions.csv") && !figures.contains(name),
+                QUESTION_FILES.contains(&name) && !figures.contains(name),
                 "Nome del listato non valido"
             );
             ensure!(
@@ -224,11 +241,14 @@ pub(super) struct ArchivedEdition {
 }
 
 fn archive(db: &Connection, active: &str) -> Result<Vec<ArchivedEdition>> {
-    let current: BTreeSet<_> = catalog::load()?
+    let mut current: BTreeSet<_> = catalog::load()?
         .listati
         .into_iter()
         .map(|e| e.versione)
         .collect();
+    if let Some(year) = crate::datasets::latest_installed(db)? {
+        current.insert(crate::datasets::edition(year));
+    }
     // Retain the whole edition when any question has progress, so its historical totals,
     // results and media remain available. CLI imports and old databases share these tables.
     let mut query = db.prepare(
@@ -279,6 +299,12 @@ fn local_bytes(path: &Path) -> Result<u64> {
 
 impl Controller {
     pub(super) fn load_figure(&self, version: &str, relative: &str) -> Result<Image> {
+        let embedded:Option<Vec<u8>>=self.db.query_row("SELECT bytes FROM dataset_images_installed WHERE version=? AND path=? AND NOT EXISTS(SELECT 1 FROM gui_signed_packages WHERE bank_version=?)",params![version,relative,version],|r|r.get(0)).optional()?;
+        if let Some(bytes) = embedded {
+            return Image::load_from_data(&bytes, None)
+                .ok()
+                .context("Formato immagine illeggibile");
+        }
         let (root, signed, digest): (String, bool, Option<String>) = self
             .db
             .query_row(
@@ -316,6 +342,29 @@ impl Controller {
     }
 
     pub(super) fn bank_management(&mut self, ui: &AppWindow) -> Result<()> {
+        let latest = crate::datasets::known_latest(&self.db, &self.dataset_dir)?;
+        if latest > self.latest_year {
+            self.offline_year = None;
+            self.bank(ui)?;
+        }
+        ui.set_dataset_files(model(
+            crate::datasets::scan(&self.dataset_dir)?
+                .into_iter()
+                .filter_map(|p| {
+                    let name = p.file_name()?.to_str()?;
+                    let obsolete =
+                        crate::datasets::year_of_file(name).is_some_and(|y| y < self.latest_year);
+                    Some(Entry {
+                        key: name.into(),
+                        label: format!(
+                            "Importa {name}{}",
+                            if obsolete { " (obsoleto)" } else { "" }
+                        )
+                        .into(),
+                    })
+                })
+                .collect(),
+        ));
         self.pending_archive = None;
         self.pending_import = None;
         ui.set_unsigned_pending(false);
@@ -432,6 +481,18 @@ impl Controller {
                 "DELETE FROM gui_media_roots WHERE bank_version=?",
                 [&entry.version],
             )?;
+            tx.execute(
+                "DELETE FROM dataset_editions WHERE version=?",
+                [&entry.version],
+            )?;
+            tx.execute(
+                "DELETE FROM dataset_imports WHERE version=?",
+                [&entry.version],
+            )?;
+            tx.execute(
+                "DELETE FROM dataset_images_installed WHERE version=?",
+                [&entry.version],
+            )?;
         }
         tx.commit()?;
         #[cfg(any(target_os = "android", test))]
@@ -483,7 +544,12 @@ impl Controller {
     }
 
     pub(super) fn verify_bank(&self, ui: &AppWindow) -> Result<()> {
-        let rule = verified_rule(&self.db, &ui.get_license(), &ui.get_procedure())?;
+        let rule = crate::exam::catalog::verified_rule_for(
+            &self.db,
+            &ui.get_license(),
+            &ui.get_procedure(),
+            &self.version,
+        )?;
         let status = if let Some((name, digest)) = self.signed_file()? {
             let root: String = self.db.query_row(
                 "SELECT directory FROM gui_media_roots WHERE bank_version=?",
@@ -512,6 +578,10 @@ impl Controller {
     pub(super) fn import_bank(&mut self, ui: &AppWindow, confirm: bool) -> Result<()> {
         let file = PathBuf::from(ui.get_import_path().trim());
         let version = catalog::version_for(&ui.get_license(), &ui.get_procedure())?;
+        ensure!(
+            self.version == version,
+            "Per importare un dataset SQLite scegli il file nella sezione DB. Per il JSON A/B seleziona l’edizione 2024 obsoleta."
+        );
         let package = Package::load(&file, &ui.get_asset_root(), &version, &self.bank_key()?)?;
         let tx = self.db.transaction()?;
         let count = storage::import_questions_in(&tx, &version, package.questions)?;
@@ -578,16 +648,8 @@ impl Controller {
             return Ok(());
         };
         let dir = Path::new(&dir).canonicalize()?;
-        let files: Vec<_> = ["questions.json", "questions.csv"]
-            .map(|n| dir.join(n))
-            .into_iter()
-            .filter(|p| p.is_file())
-            .collect();
-        ensure!(
-            files.len() == 1,
-            "Scegli una cartella con un solo listato questions.json o questions.csv"
-        );
-        ui.set_import_path(files[0].to_string_lossy().as_ref().into());
+        let file = questions_in(&dir)?;
+        ui.set_import_path(file.to_string_lossy().as_ref().into());
         ui.set_asset_root(dir.to_string_lossy().as_ref().into());
         Ok(())
     }

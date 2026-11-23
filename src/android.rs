@@ -98,7 +98,11 @@ fn android_main(app: AndroidApp) {
         }
     });
     if init.is_ok() {
-        if let Err(error) = crate::gui::run(&directory.join("patenti.sqlite3")) {
+        if let Err(error) = crate::gui::run(&if directory.join("patenti.sqlite3").is_file() {
+            directory.join("patenti.sqlite3")
+        } else {
+            directory.join("progressi.sqlite3")
+        }) {
             eprintln!("ZeroPatenti: {error:#}");
         }
     }

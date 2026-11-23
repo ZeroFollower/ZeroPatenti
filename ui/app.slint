@@ -101,6 +101,9 @@ export component AppWindow inherits Window {
     in property <string> study-detail-source;
     in property <bool> study-correct;
     in property <[Entry]> bank-list;
+    in property <[Entry]> dataset-files;
+    in property <string> edition-warning;
+    in property <bool> ab-edition;
     in property <string> active-version;
     in property <bool> official-ready;
     in property <int> official-count;
@@ -182,6 +185,7 @@ export component AppWindow inherits Window {
             }
             VerticalLayout {
                 horizontal-stretch: 1;
+                if root.edition-warning != "": Body { text: root.edition-warning; }
                 if root.notice != "": Rectangle {
                     background: #403523; height: note.preferred-height + 16px;
                     note := Text { x: 14px; width: parent.width - 28px; text: root.notice; wrap: word-wrap; vertical-alignment: center; color: #ffe1a3; }
@@ -312,6 +316,13 @@ export component AppWindow inherits Window {
                         if root.page == "import": VerticalLayout {
                             spacing: 12px;
                             PageTitle { title: "Gestione banche dati"; subtitle: "Listati per patente e procedura, disponibili per lo studio offline."; }
+                            for file in root.dataset-files: Button {
+                                text: file.label;
+                                clicked => { root.open-entry("dataset",file.key); }
+                            }
+                            if root.total == 0 && root.ab-edition: Button {
+                                text: "Scarica il dataset selezionato"; clicked => {root.act("get-dataset");}
+                            }
                             for item in root.bank-list: ChoiceTile {
                                 title: item.label; caption: item.key;
                                 compact: root.compact; selected: item.key == root.active-version;

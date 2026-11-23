@@ -14,10 +14,10 @@ def sign_bank(folder: Path, version: str, key: Path, openssl: str) -> str:
     key = key.resolve(strict=True)
     if key.is_relative_to(folder):
         raise ValueError("Conserva la chiave privata fuori dalla cartella distribuita")
-    candidates = [folder / name for name in ("questions.json", "questions.csv")
+    candidates = [folder / name for name in ("questions.json", "questions.csv", "AB2020.json")
                   if (folder / name).is_file()]
     if len(candidates) != 1:
-        raise ValueError("La cartella deve contenere un solo questions.json o questions.csv")
+        raise ValueError("Scegli un solo listato tra questions.json, questions.csv e AB2020.json")
     questions, = candidates
     if questions.resolve(strict=True) != questions:
         raise ValueError("Il listato deve essere un file nella cartella del pacchetto")

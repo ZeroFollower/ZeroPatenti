@@ -108,7 +108,7 @@ cargo test
 cargo build --release
 
 # Dataset A/B 7.020, scaricato localmente dal repository indicato
-cargo run --release -- import-json data/questions.json --version AB-7020
+cargo run --release -- import-json data/AB-2024/AB2020.json --version AB-7020
 
 # Versione nuova, DOPO conversione e verifica del listato ministeriale
 cargo run --release -- import-csv data/ab_7185_normalizzato.csv --version AB-7185
@@ -124,7 +124,7 @@ cargo run --release -- export-anki --version AB-7020 export_anki.tsv
 
 # Note per Anki e media separati
 cargo run --release -- export-anki --version AB-7020 export_anki.tsv \
-  --image-root /percorso/simulatore-quiz-patente/public \
+  --image-root data/AB-2024 \
   --media-out ./export_media
 
 # Database in un percorso personalizzato: --db è un argomento globale
