@@ -1,0 +1,134 @@
+export global Theme {
+    out property <color> canvas: #0c1623;
+    out property <color> sidebar: #101d2c;
+    out property <color> panel: #192a3c;
+    out property <color> panel-light: #24384d;
+    out property <color> border: #395269;
+    out property <color> text: #f5f8fc;
+    out property <color> muted: #bdd0e0;
+    out property <color> accent: #35ddba;
+    out property <color> cyan: #6de8f0;
+}
+
+export component Icon inherits Image {
+    in property <string> name;
+    in property <color> color: Theme.cyan;
+    preferred-width: 24px;
+    preferred-height: 24px;
+    image-fit: contain;
+    colorize: root.color;
+    accessible-role: none;
+    source: root.name == "home" ? @image-url("icons/home.svg") :
+        root.name == "book" ? @image-url("icons/book.svg") :
+        root.name == "refresh" ? @image-url("icons/refresh.svg") :
+        root.name == "plus" ? @image-url("icons/plus.svg") :
+        root.name == "brain" ? @image-url("icons/brain.svg") :
+        root.name == "clipboard" ? @image-url("icons/clipboard.svg") :
+        root.name == "sliders" ? @image-url("icons/sliders.svg") :
+        root.name == "chart" ? @image-url("icons/chart.svg") :
+        root.name == "database" ? @image-url("icons/database.svg") :
+        root.name == "settings" ? @image-url("icons/settings.svg") :
+        root.name == "check" ? @image-url("icons/check.svg") :
+        root.name == "star" ? @image-url("icons/star.svg") :
+        root.name == "file" ? @image-url("icons/file.svg") :
+        root.name == "clock" ? @image-url("icons/clock.svg") :
+        root.name == "shield" ? @image-url("icons/shield.svg") :
+        root.name == "arrow" ? @image-url("icons/arrow.svg") :
+        root.name == "menu" ? @image-url("icons/menu.svg") :
+        root.name == "play" ? @image-url("icons/play.svg") :
+        @image-url("icons/menu.svg");
+}
+
+export component LabelText inherits Text {
+    color: Theme.text;
+    font-size: 15px;
+    wrap: word-wrap;
+    vertical-alignment: center;
+}
+
+export component Card inherits Rectangle {
+    background: @linear-gradient(155deg, Theme.panel-light 0%, Theme.panel 100%);
+    border-color: Theme.border;
+    border-width: 1px;
+    border-radius: 12px;
+    VerticalLayout {
+        padding: 18px;
+        spacing: 12px;
+        @children
+    }
+}
+
+export component ButtonSurface inherits Rectangle {
+    in property <bool> enabled: true;
+    out property <bool> hovered: touch.has-hover && root.enabled;
+    out property <bool> held: touch.pressed && root.enabled;
+    out property <bool> focused: key-focus.has-focus && root.enabled;
+    callback clicked();
+    forward-focus: key-focus;
+    accessible-role: button;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+    @children
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            if root.enabled {
+                key-focus.focus();
+                root.clicked();
+            }
+        }
+    }
+    key-focus := FocusScope {
+        width: 0px;
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if root.enabled && (event.text == Key.Space || event.text == Key.Return) {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
+export component ActionButton inherits ButtonSurface {
+    in property <string> text;
+    in property <string> icon;
+    in property <bool> primary;
+    accessible-label: root.text;
+    border-radius: 8px;
+    border-color: root.focused ? #c5fff7 : root.primary && root.enabled ? #30d8ac : #4a637b;
+    border-width: root.focused ? 2px : 1px;
+    background: !root.enabled ? #233446 :
+        root.held ? (root.primary ? #087963 : #2b4158) :
+        root.hovered ? (root.primary ? #138e71 : #344c65) :
+        root.primary ? @linear-gradient(180deg, #118a6e 0%, #08765e 100%) :
+                       @linear-gradient(180deg, #30465d 0%, #203246 100%);
+    min-width: 44px;
+    min-height: max(42px, content.min-height);
+    preferred-width: content.preferred-width;
+    vertical-stretch: 0;
+    content := HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 7px;
+        padding-bottom: 7px;
+        spacing: 8px;
+        alignment: center;
+        if root.icon != "": Icon {
+            name: root.icon;
+            width: 19px;
+            height: 19px;
+            color: !root.enabled ? #92a9b8 : root.primary ? white : Theme.cyan;
+        }
+        LabelText {
+            text: root.text;
+            color: root.enabled ? Theme.text : #a6b8c8;
+            font-weight: 600;
+            horizontal-alignment: center;
+            accessible-role: none;
+        }
+    }
+}

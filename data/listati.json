@@ -12,7 +12,19 @@
       "versione": "AM-MIT-2025",
       "pronto": true,
       "fonte": "https://www.ilportaledellautomobilista.it/documents/56611/57321/Domande%2BAM%2Bitaliano%2B04%2B04%2B2025/ad547e38-92c7-4f92-850d-487be020ccc3",
-      "note": "Listato AM separato: estrazione e verifica PDF ancora necessarie"
+      "note": "Edizione italiana verificata. Per le simulazioni importare la normalizzazione del PDF con scripts/normalize_bank.py.",
+      "exam": {
+        "pdf_sha256": "61d1e0516b972526401615d9cde18e8b2e60de754a70a97dca9edfb2c4347b30",
+        "row_count": 2035,
+        "digest": "20093b7e1abb8ba1e51776093ca7e85d471d3d5321339ca17f4ac06f8e2e2c9f",
+        "version": "CIRC-28821-2019",
+        "source": "https://www.mit.gov.it/nfsmitgov/files/media/normativa/2019-09/Circolare_protocollo_28821del_19-09-2019.pdf",
+        "valid_from": "2019-09-19",
+        "valid_until": null,
+        "question_count": 30,
+        "max_errors": 3,
+        "duration_seconds": 1500
+      }
     },
     {
       "nome": "A/B conseguimento",
@@ -28,7 +40,19 @@
       "versione": "AB-7020",
       "pronto": true,
       "fonte": "https://www.ilportaledellautomobilista.it/documents/56611/57319/210926_Conseguimento%2BA-B%2Bitaliano.pdf/07091bb8-a16b-4fa1-b921-4fd21fa5b650",
-      "note": "7.020 affermazioni: usare import JSON solo dopo verifica rispetto alla fonte ministeriale"
+      "note": "Edizione italiana verificata. Per le simulazioni importare la normalizzazione del PDF con scripts/normalize_bank.py.",
+      "exam": {
+        "pdf_sha256": "fc52aaabda2256eaa711b30a85505316c9f563a9d632d210fa8e0c9aa84bf239",
+        "row_count": 7020,
+        "digest": "f232afca143a5927170c1e1d1a15d28d0b16235c1e35a370d5a04bf7e86ee2c8",
+        "version": "DD-439-2021",
+        "source": "https://www.mit.gov.it/nfsmitgov/files/media/normativa/2021-12/DECRETO_protocollo_0000439_del%20_13-12-2021.pdf",
+        "valid_from": "2021-12-20",
+        "valid_until": null,
+        "question_count": 30,
+        "max_errors": 3,
+        "duration_seconds": 1200
+      }
     },
     {
       "nome": "Superiori conseguimento",
@@ -80,7 +104,19 @@
       "versione": "AM-REV-2025",
       "pronto": true,
       "fonte": "https://www.ilportaledellautomobilista.it/documents/56611/57321/Domande+Revisione+AM+italiano+04+04+2025/4f244772-9daf-4ffd-91e4-a60707127f98",
-      "note": "Non confondere con l'esame di conseguimento AM"
+      "note": "Edizione italiana verificata. Per le simulazioni importare la normalizzazione del PDF con scripts/normalize_bank.py.",
+      "exam": {
+        "pdf_sha256": "738f9e988e20112671d5e89ada94d5515cd542b33797bcb5b8366f3119b9a5cb",
+        "row_count": 1582,
+        "digest": "b372dec5d68616d5074fabe9f17fce86815bc21a531eed21a589194103b616c4",
+        "version": "DM-2016-02-15",
+        "source": "https://www.gazzettaufficiale.it/eli/gu/2016/04/20/92/sg/pdf",
+        "valid_from": "2016-07-01",
+        "valid_until": null,
+        "question_count": 20,
+        "max_errors": 2,
+        "duration_seconds": 1200
+      }
     },
     {
       "nome": "A/B revisione",
@@ -95,8 +131,20 @@
       "procedura": "revisione",
       "versione": "AB-REV-MIT",
       "pronto": true,
-      "fonte": "https://www.ilportaledellautomobilista.it/web/portale-automobilista/-/quiz-per-le-patenti-am-b-superiori-e-cqc",
-      "note": "Selezionare il PDF di revisione AB, diverso dal conseguimento"
+      "fonte": "https://www.ilportaledellautomobilista.it/documents/56611/57321/domande%2Brevisione%2BAB%2Bitaliano%2B23%2B04%2B2025/f06e544b-db67-40f4-a5db-2a21f5896521",
+      "note": "Edizione italiana verificata. Per le simulazioni importare la normalizzazione del PDF con scripts/normalize_bank.py.",
+      "exam": {
+        "pdf_sha256": "61066cc0f3ec09fa1855c2b5f1efa6175c9442cb25daf9625d20c999e05977ba",
+        "row_count": 1814,
+        "digest": "6481ebe0fc7eaed59347cc31a167045db617d030d643feef58ae370c3de7ca78",
+        "version": "DM-2016-02-15",
+        "source": "https://www.gazzettaufficiale.it/eli/gu/2016/04/20/92/sg/pdf",
+        "valid_from": "2016-07-01",
+        "valid_until": null,
+        "question_count": 30,
+        "max_errors": 3,
+        "duration_seconds": 1800
+      }
     },
     {
       "nome": "Superiori revisione",

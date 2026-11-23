@@ -20,7 +20,7 @@ dei quesiti**, distinto dalla **categoria di patente**.
 - Gli ID degli argomenti sono specifici del listato e non si riutilizzano
   automaticamente tra edizioni diverse.
 
-## GUI Slint prevista
+## GUI Slint
 
 Nelle schermate Studio e Ripasso, sopra il pulsante **Inizia**, visualizzare:
 
@@ -65,7 +65,7 @@ Se non specifichi `--topic-id`, è selezionato **Tutti gli argomenti**.
 - ID dei topic controllati rispetto a `source_version`, deduplicati.
 - I dati del catalogo vanno validati rispetto al listato ufficiale.
 - FSRS-7 resta interno al programma e non appare nella UI.
-- La GUI Slint è progettata, **non ancora implementata**.
+- Nella GUI Slint il selettore mostra gli argomenti della banca importata, con ricerca, conteggi e selezione multipla.
 
 ## Test
 `topic_filter_never_leaks_other_topics`: selezione di topic 11 non restituisce

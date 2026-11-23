@@ -1,0 +1,286 @@
+import { Icon, Card, ActionButton, ButtonSurface } from "theme.slint";
+import { CheckBox, LineEdit, ScrollView } from "std-widgets.slint";
+
+export struct TopicItem { label: string, summary: string, chosen: bool }
+
+export component Heading inherits Text {
+    color: #f2f7ff; font-size: 30px; font-weight: 750; wrap: word-wrap;
+}
+export component Body inherits Text {
+    color: #d7e5f3; font-size: 15px; wrap: word-wrap; vertical-alignment: center;
+}
+export component PageTitle inherits VerticalLayout {
+    in property <string> title;
+    in property <string> subtitle;
+    spacing: 3px;
+    Heading { text: root.title; }
+    if root.subtitle != "": Body { text: root.subtitle; }
+}
+export component CardTitle inherits HorizontalLayout {
+    in property <string> icon;
+    in property <string> title;
+    spacing: 10px;
+    Icon { name: root.icon; color: #64e3ef; width: 23px; height: 23px; }
+    Body { text: root.title; font-size: 18px; font-weight: 700; horizontal-stretch: 1; }
+}
+
+export component SettingRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    spacing: 10px;
+    Body { text: root.label; font-weight: 650; horizontal-stretch: 2; }
+    Rectangle {
+        horizontal-stretch: 3; border-radius: 7px; border-width: 1px;
+        border-color: #38526a; background: #162738;
+        VerticalLayout {
+            padding: 9px;
+            Body { text: root.value; }
+        }
+    }
+}
+
+// A single button owns pointer, keyboard and accessibility activation.
+export component ChoiceTile inherits ButtonSurface {
+    in property <string> title;
+    in property <string> caption;
+    in property <string> icon;
+    in property <string> badge;
+    in property <bool> selected;
+    in property <bool> compact;
+    callback activated;
+    accessible-label: root.title;
+    clicked => { root.activated(); }
+    border-radius: 11px;
+    background: root.selected ? @linear-gradient(110deg, #174b52, #10303d)
+                              : @linear-gradient(110deg, #24384d, #172739);
+    border-color: root.focused ? #b7f7ff : root.selected ? #24d4ab : root.hovered ? #688ba2 : #334c60;
+    border-width: root.focused || root.selected ? 2px : 1px;
+    min-height: layout.min-height; preferred-height: max(70px, layout.preferred-height);
+    layout := HorizontalLayout {
+        padding: root.compact ? 10px : 16px; spacing: 12px;
+        Rectangle {
+            width: root.compact ? 30px : 44px; height: self.width; border-radius: 9px;
+            background: root.selected ? #185b58 : #24455c;
+            Icon { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                width: parent.width * 0.61; height: self.width; name: root.icon; color: #66ece7; }
+        }
+        VerticalLayout {
+            alignment: center; spacing: 3px; horizontal-stretch: 1;
+            Body { text: root.title; font-weight: 700; color: #f3f8ff; }
+            if root.caption != "": Body { text: root.caption; font-size: 13px; color: #beccdd; }
+        }
+        if root.badge != "": Rectangle {
+            width: badge-text.preferred-width + 16px; height: 26px; border-radius: 7px;
+            background: root.selected ? #134f49 : #254158;
+            badge-text := Text { text: root.badge; font-size: 12px; font-weight: 650;
+                color: root.selected ? #76f3c9 : #a9d9ed; horizontal-alignment: center; vertical-alignment: center; }
+        }
+    }
+}
+
+export component TopicChooser inherits Rectangle {
+    in property <[TopicItem]> topics;
+    in property <int> selected-count;
+    in-out property <string> search;
+    private property <bool> selected-only;
+    callback toggle(int);
+    callback choose-all(bool);
+    pure callback matching-indices([TopicItem],string,bool,int) -> [int];
+    private property <[int]> indices: root.matching-indices(root.topics, root.search, root.selected-only, root.selected-count);
+    callback close();
+    background: #162738; border-width: 1px; border-color: #395269;
+    VerticalLayout {
+        padding: 16px; spacing: 10px;
+        CardTitle { title: "Argomenti"; icon: "sliders"; }
+        Body { text: "Selezionati " + root.selected-count + " / " + root.topics.length; }
+        LineEdit { accessible-label: "Cerca un argomento"; placeholder-text: "Cerca un argomento"; text <=> root.search; }
+        CheckBox { text: "Mostra solo selezionati"; checked <=> root.selected-only; }
+        HorizontalLayout {
+            spacing: 6px;
+            ActionButton { text: "Seleziona tutti"; clicked => {root.choose-all(true);} }
+            ActionButton { text: "Deseleziona tutti"; clicked => {root.choose-all(false);} }
+        }
+        list := ScrollView {
+            vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+            content-width: self.visible-width;
+            VerticalLayout {
+                alignment: start;
+                VerticalLayout {
+                    spacing: 5px;
+                    for i in root.indices: ButtonSurface {
+                        property <TopicItem> t: root.topics[i];
+                        accessible-role: checkbox; accessible-label: t.label + ". " + t.summary;
+                        accessible-checkable: true; accessible-checked: t.chosen;
+                        border-radius: 7px; border-width: self.focused ? 2px : 1px;
+                        border-color: self.focused ? #b7f7ff : t.chosen ? #2b706c : #38536a;
+                        background: self.hovered ? #254653 : t.chosen ? #173c45 : #1d3042;
+                        min-height: max(48px, row.min-height); preferred-height: row.preferred-height;
+                        clicked => {root.toggle(i);}
+                        row := HorizontalLayout {
+                            padding: 10px; spacing: 10px;
+                            Rectangle {
+                                width: 21px; height: 21px; border-radius: 4px; border-width: 1px;
+                                background: t.chosen ? #15886e : #182838; border-color: t.chosen ? #55e4bc : #8a9eae;
+                                if t.chosen: Icon { x: 3px; y: 3px; width: 15px; height: 15px; name: "check"; color: white; }
+                            }
+                            VerticalLayout {
+                                spacing: 4px; horizontal-stretch: 1;
+                                Body { text: t.label; font-weight: 650; accessible-role: none; }
+                                Body { text: t.summary; font-size: 13px; color: #bfd0dd; accessible-role: none; }
+                            }
+                        }
+                    }
+                }
+                if root.indices.length == 0: Body { text: "Nessun argomento corrispondente."; }
+            }
+        }
+        ActionButton { text: "Torna alla configurazione"; primary: true; clicked => {root.close();} }
+    }
+    changed search => {list.content-y = 0px;}
+    changed selected-only => {list.content-y = 0px;}
+}
+
+export component FigureButton inherits ButtonSurface {
+    in property <image> figure;
+    accessible-label: "Ingrandisci la figura del quesito";
+    height: 160px; border-radius: 8px; border-width: root.focused ? 3px : 1px;
+    background: #f6f8fa; border-color: root.focused ? #21b59b : #c3d3dd;
+    Image { x: 6px; y: 6px; width: parent.width - 12px; height: parent.height - 33px;
+        source: root.figure; image-fit: contain; accessible-role: none; }
+    Text { x: 6px; y: parent.height - 25px; width: parent.width - 12px; height: 23px;
+        text: "Ingrandisci figura"; color: #174d5c; font-size: 14px; font-weight: 700; horizontal-alignment: center; accessible-role: none; }
+}
+
+export component FigureViewer inherits Rectangle {
+    in property <image> figure;
+    callback close();
+    private property <int> zoom: 1;
+    function set-zoom(next: int) {
+        let center-x = (view.visible-width / 2 - view.content-x) / view.content-width;
+        let center-y = (view.visible-height / 2 - view.content-y) / view.content-height;
+        root.zoom = next;
+        view.content-x = clamp(view.visible-width / 2 - center-x * view.content-width, view.visible-width - view.content-width, 0px);
+        view.content-y = clamp(view.visible-height / 2 - center-y * view.content-height, view.visible-height - view.content-height, 0px);
+    }
+    background: #101e2c; border-width: 1px; border-color: #395269;
+    VerticalLayout {
+        padding: 12px; spacing: 10px;
+        CardTitle { title: "Figura del quesito"; icon: "file"; }
+        view := ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: root.zoom == 1 ? always-off : as-needed;
+            vertical-scrollbar-policy: root.zoom == 1 ? always-off : as-needed;
+            content-width: self.visible-width * root.zoom;
+            content-height: self.visible-height * root.zoom;
+            Rectangle {
+                width: view.content-width; height: view.content-height; background: #fafafa;
+                Image { width: parent.width; height: parent.height; source: root.figure; image-fit: contain; accessible-label: "Figura ingrandita del quesito"; }
+            }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            ActionButton { text: "−"; accessible-label: "Riduci figura"; enabled: root.zoom > 1; clicked => {root.set-zoom(root.zoom - 1);} }
+            Body { text: root.zoom * 100 + "%"; horizontal-alignment: center; horizontal-stretch: 1; }
+            ActionButton { text: "+"; accessible-label: "Ingrandisci ancora"; enabled: root.zoom < 4; clicked => {root.set-zoom(root.zoom + 1);} }
+            ActionButton { text: "Chiudi"; primary: true; clicked => {root.close();} }
+        }
+    }
+}
+
+export component StudyView inherits VerticalLayout {
+    in property <string> license;
+    in property <string> topic;
+    in property <string> prompt;
+    in property <string> stage;
+    in property <string> solution;
+    in property <bool> correct;
+    in property <string> explanation;
+    in property <string> explanation-source;
+    in property <string> detail;
+    in property <string> detail-source;
+    private property <bool> expanded;
+    changed number => { root.expanded = false; }
+    in property <int> number;
+    in property <int> total;
+    in property <bool> continuous;
+    in property <int> rating;
+    in property <image> figure;
+    in property <bool> has-figure;
+    in property <bool> compact;
+    callback act(string);
+    callback rate(int);
+    callback zoom();
+    spacing: 14px;
+    HorizontalLayout {
+        spacing: 10px;
+        PageTitle { horizontal-stretch: 1; title: root.continuous ? "Sessione continua" : "Studio e ripasso"; subtitle: "Patente " + root.license + " · " + root.topic; }
+        VerticalLayout {
+            width: root.compact ? (root.continuous ? 88px : 65px) : 154px; alignment: center; spacing: 7px;
+            Body { text: root.continuous ? "Domanda " + root.number : root.number + " / " + root.total; font-weight: 700; horizontal-alignment: right; }
+            if !root.continuous: Rectangle {
+                height: 8px; border-radius: 4px; background: #30475e;
+                Rectangle { x: 0px; width: parent.width * root.number / max(1, root.total); border-radius: 4px; background: #27c99d; }
+            }
+        }
+    }
+    Card {
+        Body { text: root.prompt; font-size: 22px; font-weight: 700; color: #f6f9fe; }
+        if root.has-figure: FigureButton { figure: root.figure; clicked => {root.zoom();} }
+        if root.stage == "answer": HorizontalLayout {
+            spacing: 10px;
+            ActionButton { text: "Vero"; clicked => {root.act("true");} }
+            ActionButton { text: "Falso"; clicked => {root.act("false");} }
+        }
+        if root.stage != "answer": Rectangle {
+            border-radius: 9px; border-width: 1px;
+            background: root.correct ? #103138 : #3b242e;
+            border-color: root.correct ? #205953 : #70414b;
+            min-height: feedback.min-height; preferred-height: feedback.preferred-height;
+            feedback := HorizontalLayout {
+                padding: 14px; spacing: 14px;
+                Rectangle {
+                    width: 40px; height: 40px; border-radius: 20px; background: root.correct ? #0d916f : #9f4758;
+                    Text { text: root.correct ? "✓" : "×"; horizontal-alignment: center; vertical-alignment: center; color: white; font-size: 26px; }
+                }
+                VerticalLayout {
+                    alignment: center; horizontal-stretch: 1;
+                    Body { text: root.correct ? "Risposta corretta" : "Risposta errata"; color: root.correct ? #73f1c6 : #ffb1bb; font-size: 19px; font-weight: 700; }
+                    Body { text: "Soluzione: " + root.solution; }
+                }
+            }
+        }
+        if root.stage != "answer" && root.correct: VerticalLayout {
+            spacing: 8px;
+            Body { text: "Quanto è stato facile ricordare la risposta?"; font-weight: 650; }
+            for row in (root.compact ? [0, 1] : [0]): HorizontalLayout {
+                spacing: 7px;
+                for column in (root.compact ? [0, 1] : [0, 1, 2, 3]): ActionButton {
+                    property <int> idx: row * 2 + column;
+                    text: ["Da ripassare", "Difficile", "Normale", "Facile"][self.idx];
+                    icon: ["refresh", "chart", "check", "star"][self.idx];
+                    primary: root.rating == self.idx + 1;
+                    enabled: root.stage == "rate" || root.rating == self.idx + 1;
+                    clicked => { if root.stage == "rate" { root.rate(self.idx + 1); } }
+                }
+            }
+        }
+        if root.stage != "answer" && root.explanation != "": VerticalLayout {
+            spacing: 5px;
+            CardTitle { icon: "file"; title: "Spiegazione breve"; }
+            Body { text: root.explanation; }
+            Body { text: root.explanation-source; color: #a8bccf; font-size: 13px; }
+            ActionButton { text: root.expanded ? "Chiudi approfondimento" : "Approfondisci"; icon: "book";
+                clicked => {root.expanded = !root.expanded;} }
+            if root.expanded: Body { text: root.detail; }
+            if root.expanded: Body { text: root.detail-source; color: #a8bccf; font-size: 13px; }
+        }
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        ActionButton { text: root.compact ? "Precedente" : "Domanda precedente"; enabled: root.number > 1; clicked => {root.act("study-prev");} }
+        Rectangle { horizontal-stretch: 1; }
+        ActionButton { text: !root.continuous && root.number == root.total ? "Termina" : (root.compact ? "Successiva" : "Prossima domanda");
+            icon: "arrow"; primary: true; enabled: root.stage == "next" || root.stage == "history"; clicked => {root.act("next");} }
+    }
+    if root.continuous: ActionButton { text: "Termina sessione"; clicked => {root.act("home");} }
+}

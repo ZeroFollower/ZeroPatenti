@@ -1,0 +1,467 @@
+import { CheckBox, ComboBox, LineEdit, Palette, ScrollView, SpinBox } from "std-widgets.slint";
+
+import { ActionButton as Button, Card as Panel, Icon } from "theme.slint";
+import { Dashboard } from "dashboard.slint";
+import { Sidebar } from "sidebar.slint";
+import { Body, Heading, PageTitle, CardTitle, SettingRow, ChoiceTile, StudyView, TopicChooser, TopicItem, FigureButton, FigureViewer } from "sections.slint";
+
+export { TopicItem }
+export struct Entry { label: string, key: string }
+component CancelExam inherits VerticalLayout {
+    in-out property <bool> confirming;
+    callback cancel;
+    spacing: 5px;
+    if !root.confirming: Button { text: "Annulla prova"; clicked => { root.confirming = true; } }
+    if root.confirming: Body { text: "Annullare questa prova? Non potrai riprenderla."; }
+    if root.confirming: HorizontalLayout {
+        spacing: 6px;
+        Button { text: "Mantieni prova"; clicked => { root.confirming = false; } }
+        Button { text: "Conferma annullamento"; clicked => { root.cancel(); } }
+    }
+}
+export component AppWindow inherits Window {
+    init => { Palette.color-scheme = ColorScheme.dark; }
+    title: "ZeroPatenti";
+    preferred-width: 1080px; preferred-height: 650px;
+    private property <bool> compact: root.width < 790px;
+    background: #0c1725;
+    in-out property <string> page: "home";
+    in-out property <string> notice;
+    in-out property <string> license: "B";
+    in-out property <string> procedure: "conseguimento";
+    in-out property <string> exam-date-input;
+    in property <bool> show-exam-onboarding;
+    in-out property <string> onboarding-date;
+    in property <string> onboarding-error;
+    in property <string> exam-date;
+    in property <string> exam-countdown;
+    in property <string> study-goal;
+    in-out property <string> mode: "Personalizzata";
+    in-out property <string> strategy: "Equilibrata";
+    in-out property <string> bank;
+    in-out property <string> rule-note;
+    in-out property <int> count: 10;
+    in-out property <bool> unlimited-study: false;
+    in property <bool> study-continuous;
+    in-out property <bool> timed: true;
+    in-out property <[TopicItem]> topics;
+    in-out property <string> search;
+    in-out property <int> selected-count;
+    in-out property <[Entry]> sessions;
+    in-out property <[Entry]> history;
+    in-out property <string> title-text;
+    in-out property <string> subtitle;
+    in-out property <string> prompt;
+    in-out property <image> figure;
+    in-out property <bool> has-figure;
+    in-out property <string> clock-text;
+    in-out property <string> answer;
+    in-out property <[string]> grid;
+    out property <int> grid-page-size: 25;
+    in property <int> grid-start;
+    in property <int> question-count;
+    in-out property <int> position;
+    in-out property <bool> confirm-cancel;
+    in-out property <string> study-stage;
+    in-out property <bool> errors-only;
+    in-out property <string> cancel-target;
+    in property <string> stats-overview;
+    in-out property <string> details;
+    in-out property <string> import-path;
+    in-out property <string> bank-public-key;
+    in property <bool> bank-key-fixed;
+    in property <string> bank-signature;
+    in property <string> bank-storage;
+    in property <string> archive-summary;
+    in property <bool> can-cleanup;
+    in property <string> cleanup-message;
+    in property <bool> cleanup-pending;
+    in-out property <bool> unsigned-pending;
+    private property <bool> show-bank-key;
+    in-out property <string> asset-root;
+    in-out property <string> since;
+    in-out property <string> until;
+    in-out property <string> stats-series: "Tutte";
+    in-out property <[string]> stats-banks;
+    in-out property <string> stats-bank;
+    in-out property <string> stats-topic: "Tutti";
+    in-out property <[string]> stats-topics;
+    in property <int> total;
+    in property <int> studied;
+    in property <int> due;
+    in property <int> recommended;
+    in property <int> memory: -1;
+    in property <int> study-total;
+    in property <int> study-number;
+    in property <int> study-rating;
+    in property <string> study-solution;
+    in property <string> study-explanation;
+    in property <string> study-explanation-source;
+    in property <string> study-detail;
+    in property <string> study-detail-source;
+    in property <bool> study-correct;
+    in property <[Entry]> bank-list;
+    in property <string> active-version;
+    in property <bool> official-ready;
+    in property <int> official-count;
+    in property <int> official-minutes;
+    private property <bool> show-import;
+    private property <length> content-scroll-y;
+    changed page => { root.content-scroll-y = 0px; root.show-import = false; figure-popup.close(); topics-popup.close(); }
+    changed study-number => { root.content-scroll-y = 0px; }
+    callback act(string);
+    callback jump(int);
+    callback topic-toggle(int);
+    pure callback matching-topics([TopicItem],string,bool,int) -> [int];
+    callback open-entry(string,string);
+    topics-popup := PopupWindow {
+        close-policy: close-on-click-outside;
+        width: root.compact ? root.width - root.safe-area-insets.left - root.safe-area-insets.right : min(460px, root.width * 0.46);
+        height: root.height - root.safe-area-insets.top - root.safe-area-insets.bottom;
+        x: root.width - root.safe-area-insets.right - self.width; y: root.safe-area-insets.top;
+        TopicChooser {
+            topics: root.topics; selected-count: root.selected-count; search <=> root.search;
+            toggle(i) => {root.topic-toggle(i);}
+            choose-all(chosen) => {root.act(chosen ? "select-all" : "select-none");}
+            matching-indices(items, query, selected, count) => {return root.matching-topics(items, query, selected, count);}
+            close => {topics-popup.close();}
+        }
+    }
+    figure-popup := PopupWindow {
+        close-policy: close-on-click-outside;
+        width: root.width - root.safe-area-insets.left - root.safe-area-insets.right - (root.compact ? 0px : 64px);
+        height: root.height - root.safe-area-insets.top - root.safe-area-insets.bottom - (root.compact ? 0px : 48px);
+        x: root.safe-area-insets.left + (root.compact ? 0px : 32px); y: root.safe-area-insets.top + (root.compact ? 0px : 24px);
+        FigureViewer { figure: root.figure; close => {figure-popup.close();} }
+    }
+    function open-question(index: int) {
+        root.jump(index);
+        root.content-scroll-y = 0px;
+    }
+    if root.show-exam-onboarding: onboarding-area := Rectangle {
+        x: root.safe-area-insets.left; y: root.safe-area-insets.top;
+        width: root.width - root.safe-area-insets.left - root.safe-area-insets.right;
+        // Android reports the on-screen keyboard separately from the system bars.
+        private property <length> bottom-edge: root.height - root.safe-area-insets.bottom;
+        height: max(0px, (root.virtual-keyboard-size.height > 0px && root.virtual-keyboard-position.y > 0px
+            ? min(self.bottom-edge, root.virtual-keyboard-position.y) : self.bottom-edge) - self.y);
+        ScrollView {
+            width: max(0px, min(440px, parent.width - 24px)); height: max(0px, min(dialog.preferred-height, parent.height - 16px));
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            horizontal-scrollbar-policy: always-off;
+            content-width: self.visible-width; content-height: dialog.preferred-height;
+            dialog := Panel {
+                width: parent.width; height: self.preferred-height;
+                Heading { text: "Quando hai l’esame?"; font-size: dialog.width < 380px ? 24px : 30px; }
+                if onboarding-area.height >= 250px: Body { text: "Puoi modificare la data nelle Impostazioni."; }
+                LineEdit {
+                    min-height: 44px;
+                    accessible-label: "Data dell’esame, giorno mese anno";
+                    placeholder-text: "GG/MM/AAAA"; text <=> root.onboarding-date;
+                    accepted(value) => { root.act("onboarding-save"); }
+                }
+                if root.onboarding-error != "": Body { color: #ffcaaf; text: root.onboarding-error; }
+                Button { text: "Salva data"; icon: "check"; primary: true; clicked => { root.act("onboarding-save"); } }
+                Button { text: "Data ancora non definita"; clicked => { root.act("onboarding-undecided"); } }
+            }
+        }
+    }
+    if !root.show-exam-onboarding: VerticalLayout {
+        x: 0px; y: 0px; width: root.width; height: root.height;
+        padding-top: root.safe-area-insets.top;
+        padding-bottom: root.safe-area-insets.bottom;
+        padding-left: root.safe-area-insets.left;
+        padding-right: root.safe-area-insets.right;
+        spacing: 0;
+        if root.compact && root.page != "exam": Sidebar {
+            compact: true; height: 58px; page: root.page; navigate(action) => { root.act(action); }
+        }
+        HorizontalLayout {
+            if !root.compact: Sidebar {
+                page: root.page; width: 216px; navigate(action) => { root.act(action); }
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                if root.notice != "": Rectangle {
+                    background: #403523; height: note.preferred-height + 16px;
+                    note := Text { x: 14px; width: parent.width - 28px; text: root.notice; wrap: word-wrap; vertical-alignment: center; color: #ffe1a3; }
+                }
+                ScrollView {
+                    content-y <=> root.content-scroll-y;
+                    vertical-stretch: 1;
+                    horizontal-scrollbar-policy: always-off;
+                    content-width: self.visible-width;
+                    VerticalLayout {
+                        alignment: start; padding: root.compact ? 12px : 24px; spacing: 14px;
+                        if root.page == "home": Dashboard {
+                            compact: root.compact; total: root.total; studied: root.studied;
+                            due: root.due; recommended: root.recommended; memory: root.memory;
+                            exam-countdown: root.exam-countdown; study-goal: root.study-goal;
+                            license: root.license; navigate(action) => {root.act(action);}
+                        }
+                        if root.page == "settings": VerticalLayout {
+                            spacing: 14px;
+                            PageTitle { title: "Impostazioni"; subtitle: "Scegli la patente e il percorso di preparazione."; }
+                            Panel {
+                                CardTitle { icon: "settings"; title: "Profilo di studio"; }
+                                Body { text: "Patente"; }
+                                ComboBox { accessible-label: "Patente"; model: ["AM","A1","A2","A","B1","B","BE"]; current-value <=> root.license; selected(v) => {root.act("bank");} }
+                                Body { text: "Procedura"; }
+                                ComboBox { accessible-label: "Procedura"; model: ["conseguimento","revisione"]; current-value <=> root.procedure; selected(v) => {root.act("bank");} }
+                                Body { text: root.bank; }
+                                Button { text: "Gestisci banche dati"; icon: "database"; clicked => {root.act("import");} }
+                            }
+                            Panel {
+                                CardTitle { icon: "clock"; title: "Data dell’esame"; }
+                                Body { text: "Con una data, le nuove domande vengono distribuite sui giorni disponibili per questa patente e procedura."; }
+                                LineEdit {
+                                    accessible-label: "Data dell’esame, giorno mese anno";
+                                    placeholder-text: "GG/MM/AAAA"; text <=> root.exam-date-input;
+                                    accepted(value) => { root.exam-date-input = value; root.act("save-exam-date"); }
+                                }
+                                if root.exam-countdown != "": Body { text: root.exam-countdown; }
+                                Button { text: "Salva data"; icon: "check"; primary: true; clicked => {root.act("save-exam-date");} }
+                                if root.exam-date != "": Button {
+                                    text: "Rimuovi data";
+                                    clicked => { root.exam-date-input = ""; root.act("save-exam-date"); }
+                                }
+                            }
+                        }
+                        if root.page == "simulation" || root.page == "study-setup": VerticalLayout {
+                            spacing: 14px;
+                            PageTitle {
+                                title: root.page == "simulation" ? "Simulazioni" : "Studio e ripasso";
+                                subtitle: "Patente " + root.license + " · " + root.procedure + " · " + root.bank;
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                for i in [0, 1]: ChoiceTile {
+                                    compact: root.compact; horizontal-stretch: 1;
+                                    title: root.page == "simulation" ? (i == 0 ? "Simulazione ufficiale" : "Simulazione personalizzata") : (i == 0 ? "Studio" : "Ripasso");
+                                    caption: root.compact ? "" : root.page == "simulation" ? (i == 0 ? "Regole e durata dell'esame" : "Configurazione libera") : (i == 0 ? "Ripassi e nuove domande" : "Solo domande da ripassare");
+                                    icon: root.page == "simulation" ? (i == 0 ? "check" : "sliders") : (i == 0 ? "book" : "refresh");
+                                    selected: i == 0 ? (root.mode == "Ufficiale" || root.mode == "Studio") : (root.mode == "Personalizzata" || root.mode == "Ripasso");
+                                    activated => {
+                                        if root.page == "simulation" { root.act(i == 0 ? "official" : "custom"); }
+                                        else { root.act(i == 0 ? "study-setup" : "review"); }
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 12px;
+                                Panel {
+                                    horizontal-stretch: 3;
+                                    CardTitle { icon: "sliders"; title: root.page == "simulation" ? "Configura la simulazione" : "Configura lo studio"; }
+                                    if root.mode == "Ufficiale": VerticalLayout {
+                                        spacing: 9px;
+                                        SettingRow { label: "Argomenti"; value: "Tutti gli argomenti"; }
+                                        if root.official-count > 0: SettingRow { label: "Numero di domande"; value: root.official-count; }
+                                        if root.official-minutes > 0: SettingRow { label: "Timer"; value: root.official-minutes + " minuti"; }
+                                        Body { text: root.rule-note; }
+                                    }
+                                    if root.mode != "Ufficiale": VerticalLayout {
+                                        spacing: 9px;
+                                        Body { text: "Argomenti · " + (root.selected-count == root.topics.length && root.selected-count > 0 ? "Tutti" : root.selected-count + " di " + root.topics.length); }
+                                        Button { text: "Personalizza argomenti"; icon: "sliders"; clicked => {topics-popup.show();} }
+                                        Body { text: "Numero di domande"; }
+                                        if root.page == "study-setup": CheckBox { text: "Senza limite"; checked <=> root.unlimited-study; }
+                                        if root.page == "simulation" || !root.unlimited-study: SpinBox { accessible-label: "Numero di domande"; minimum: 1; maximum: 9999; value <=> root.count; edited(v) => {root.act("config");} }
+                                    }
+                                    if root.mode == "Personalizzata": VerticalLayout {
+                                        spacing: 7px;
+                                        Body { text: "Strategia di selezione"; }
+                                        ComboBox { accessible-label: "Estrazione"; model: ["Equilibrata","Casuale","Intelligente"]; current-value <=> root.strategy; }
+                                        CheckBox { text: "Usa il tempo ufficiale"; checked <=> root.timed; }
+                                        Body { text: root.rule-note; }
+                                    }
+                                }
+                                if !root.compact && root.page == "simulation": Panel {
+                                    horizontal-stretch: 2;
+                                    CardTitle { icon: "clipboard"; title: root.mode == "Ufficiale" ? "Simulazione ufficiale" : "Prova personalizzata"; }
+                                    Body { text: root.mode == "Ufficiale" ? "Stesse regole dell'esame." : "Scegli argomenti, durata e numero di domande."; }
+                                    Body { text: "Le soluzioni sono visibili dopo la consegna."; }
+                                    Body { text: root.mode == "Ufficiale" ? "La prova ufficiale non modifica il ripasso personale." : "Alla consegna, le risposte aggiornano il ripasso personale."; }
+                                }
+                            }
+                            if root.total == 0: Button { icon: "database"; text: "Apri Banche dati per importare il listato"; clicked => {root.act("import");} }
+                            Button { text: root.page == "simulation" ? "Avvia simulazione" : root.unlimited-study ? "Avvia sessione continua" : "Inizia a studiare"; primary: true; icon: "arrow";
+                                enabled: root.total > 0 && (root.mode == "Ufficiale" ? root.official-ready : root.selected-count > 0 && (root.mode != "Personalizzata" || root.official-count > 0));
+                                clicked => {root.act("start");} }
+                        }
+                        if root.page == "home" || root.page == "simulation": VerticalLayout {
+                            spacing: 7px;
+                            if root.sessions.length > 0: CardTitle { icon: "clock"; title: "Prove sospese"; }
+                            for s in root.sessions: Panel {
+                                Body { text: s.label; }
+                                if root.cancel-target != s.key: HorizontalLayout {
+                                    spacing: 8px;
+                                    Button { text: "Riprendi"; primary: true; clicked => {root.open-entry("resume-saved",s.key);} }
+                                    Button { text: "Annulla prova"; clicked => {root.cancel-target = s.key;} }
+                                }
+                                if root.cancel-target == s.key: VerticalLayout {
+                                    spacing: 8px;
+                                    Body { text: "Annullare questa prova? Non potrai riprenderla."; }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        Button { text: "Mantieni prova"; clicked => {root.cancel-target = "";} }
+                                        Button { text: "Conferma annullamento"; clicked => {root.open-entry("cancel-saved",s.key);} }
+                                    }
+                                }
+                            }
+                        }
+                        if root.page == "import": VerticalLayout {
+                            spacing: 12px;
+                            PageTitle { title: "Gestione banche dati"; subtitle: "Listati per patente e procedura, disponibili per lo studio offline."; }
+                            for item in root.bank-list: ChoiceTile {
+                                title: item.label; caption: item.key;
+                                compact: root.compact; selected: item.key == root.active-version;
+                                badge: self.selected ? "Selezionata" : ""; icon: self.selected ? "check" : "database";
+                                activated => { root.open-entry("bank", item.key); }
+                            }
+                            Panel {
+                                CardTitle { icon: "shield"; title: "Verifica firma digitale"; }
+                                Body { text: "Listato selezionato: " + root.bank; }
+                                Body { text: root.bank-signature; }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Button { text: "Verifica listato"; icon: "shield"; enabled: root.total > 0; clicked => {root.act("verify-bank");} }
+                                    Button { text: root.show-import ? "Chiudi importazione" : "Importa listato e immagini"; icon: "file"; clicked => {root.show-import = !root.show-import;} }
+                                }
+                                if root.show-import: VerticalLayout {
+                                    spacing: 7px;
+                                    Button { text: "Scegli la cartella del listato"; clicked => {root.act("pick-bank");} }
+                                    Body { text: "File locale dei quesiti (CSV o JSON)"; }
+                                    LineEdit { text <=> root.import-path; placeholder-text: "Percorso del file"; }
+                                    Body { text: "Cartella delle immagini"; }
+                                    LineEdit { text <=> root.asset-root; placeholder-text: "Cartella di origine"; }
+                                    Button { text: root.unsigned-pending ? "Conferma importazione senza firma" : "Importa"; primary: true; clicked => {root.act(root.unsigned-pending ? "confirm-unsigned" : "import-file");} }
+                                    Button { text: "Salva cartella immagini"; clicked => {root.act("save-media");} }
+                                }
+                                Button { text: root.show-bank-key ? "Chiudi chiave editore" : "Chiave pubblica dell’editore"; clicked => { root.show-bank-key = !root.show-bank-key; } }
+                                if root.show-bank-key: VerticalLayout {
+                                    spacing: 6px;
+                                    Body { text: root.bank-key-fixed ? "Chiave Ed25519 inclusa nella distribuzione" : "Inserisci la chiave Ed25519 ricevuta direttamente dall’editore attraverso un canale attendibile."; }
+                                    LineEdit { accessible-label: "Chiave pubblica Ed25519"; text <=> root.bank-public-key; read-only: root.bank-key-fixed; placeholder-text: "64 cifre esadecimali"; }
+                                    if !root.bank-key-fixed: Button { text: "Salva chiave pubblica"; clicked => { root.act("save-bank-key"); } }
+                                }
+                            }
+                            Panel {
+                                CardTitle { icon: "database"; title: "Archivio e spazio occupato"; }
+                                Body { text: root.bank-storage + " per database e copie private"; }
+                                Body { text: root.archive-summary; }
+                                if !root.cleanup-pending: Button { text: "Anteprima pulizia versioni obsolete"; enabled: root.can-cleanup; clicked => { root.act("preview-archive"); } }
+                                if root.cleanup-pending: VerticalLayout {
+                                    spacing: 6px;
+                                    Body { text: root.cleanup-message; }
+                                    Button { text: "Mantieni le edizioni"; clicked => { root.act("cancel-cleanup"); } }
+                                    Button { text: "Conferma rimozione"; clicked => { root.act("clean-archive"); } }
+                                }
+                            }
+                        }
+                        if root.page == "study": StudyView {
+                            compact: root.compact; license: root.license; topic: root.subtitle;
+                            prompt: root.prompt; figure: root.figure; has-figure: root.has-figure;
+                            stage: root.study-stage; solution: root.study-solution; correct: root.study-correct;
+                            number: root.study-number; total: root.study-total; continuous: root.study-continuous; rating: root.study-rating; explanation: root.study-explanation;
+                            explanation-source: root.study-explanation-source; detail: root.study-detail; detail-source: root.study-detail-source;
+                            zoom => {figure-popup.show();}
+                            act(action) => { root.act(action); } rate(index) => {root.jump(index);}
+                        }
+                        if root.page == "exam": Panel {
+                            PageTitle { title: root.title-text; subtitle: root.subtitle; }
+                            Body { text: root.clock-text; }
+                            if root.has-figure: FigureButton { figure: root.figure; clicked => {figure-popup.show();} }
+                            Body { text: root.prompt; font-size: 21px; }
+                        }
+                        if root.page == "exam": Panel {
+                            Body { text: "Domande " + (root.grid-start + 1) + "–" + (root.grid-start + root.grid.length) + " di " + root.question-count; }
+                            if root.question-count > root.grid-page-size: HorizontalLayout {
+                                spacing: 6px;
+                                Button {
+                                    text: "Gruppo prec."; accessible-label: "Gruppo precedente";
+                                    enabled: root.grid-start > 0;
+                                    clicked => { root.jump(root.grid-start - root.grid-page-size); }
+                                }
+                                Button {
+                                    text: "Gruppo succ."; accessible-label: "Gruppo successivo";
+                                    enabled: root.grid-start + root.grid-page-size < root.question-count;
+                                    clicked => { root.jump(root.grid-start + root.grid-page-size); }
+                                }
+                            }
+                            Rectangle {
+                                height: floor((root.grid.length + 4) / 5) * 42px;
+                                for n[i] in root.grid: Button {
+                                    x: mod(i, 5) * parent.width / 5; y: floor(i / 5) * 42px;
+                                    width: parent.width / 5 - 2px; height: 40px; text: n;
+                                    primary: root.grid-start + i == root.position;
+                                    clicked => { root.open-question(root.grid-start + i); }
+                                }
+                            }
+                        }
+                        if root.page == "paused": Panel {
+                            Heading { text: "Prova sospesa"; }
+                            Body { text: root.subtitle; }
+                            Body { text: root.clock-text; }
+                            Button { text: "Riprendi"; primary: true; clicked => {root.act("resume");} }
+                        }
+                        if root.page == "paused": Panel {
+                            CancelExam {
+                                confirming <=> root.confirm-cancel;
+                                cancel => { root.act("cancel"); }
+                            }
+                        }
+                        if root.page == "result": Panel {
+                            Heading { text: root.title-text; }
+                            Body { text: root.subtitle; }
+                            CheckBox { text: "Solo errori e omesse"; checked <=> root.errors-only; toggled => {root.act("result");} }
+                            Body { text: root.details; }
+                        }
+                        if root.page == "stats": stats-panel := Panel {
+                            private property <bool> expanded;
+                            Heading { text: "Statistiche"; }
+                            Body { text: "Patente " + root.license + " · " + root.procedure; }
+                            ComboBox { accessible-label: "Edizione del listato"; model: root.stats-banks; current-value <=> root.stats-bank; selected(v) => {root.stats-topic = "Tutti";root.act("stats");} }
+                            ComboBox { model: ["Tutte","Ufficiale","Casuale","Equilibrata","Intelligente"]; current-value <=> root.stats-series; }
+                            ComboBox { model: root.stats-topics; current-value <=> root.stats-topic; }
+                            LineEdit { text <=> root.since; placeholder-text: "Dal giorno (AAAA-MM-GG)"; }
+                            LineEdit { text <=> root.until; placeholder-text: "Al giorno (AAAA-MM-GG)"; }
+                            Button { text: "Aggiorna statistiche"; clicked => {root.act("stats");} }
+                            Body { text: root.stats-overview; }
+                            if root.details != "": Button { text: stats-panel.expanded ? "Nascondi dettagli" : "Dettagli per argomento e andamento"; clicked => { stats-panel.expanded = !stats-panel.expanded; } }
+                            if stats-panel.expanded: Body { text: root.details; }
+                            for s in root.history: Button { text: s.label; clicked => {root.open-entry("result",s.key);} }
+                        }
+                    }
+                }
+                if root.page == "exam": Rectangle {
+                    background: #152738;
+                    border-width: 1px; border-color: #345067;
+                    vertical-stretch: 0;
+                    VerticalLayout {
+                        padding: 8px; spacing: 5px;
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Button { text: "Vero"; primary: root.answer == "Vero"; clicked => { root.act("true"); } }
+                            Button { text: "Falso"; primary: root.answer == "Falso"; clicked => { root.act("false"); } }
+                            Button { text: "Cancella risposta"; enabled: root.answer != ""; clicked => { root.act("clear"); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Button { text: "Precedente"; enabled: root.position > 0; clicked => { root.open-question(root.position - 1); } }
+                            Button { text: "Successiva"; enabled: root.position + 1 < root.question-count; clicked => { root.open-question(root.position + 1); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Button { text: "Interrompi e salva"; clicked => { root.act("pause"); } }
+                            Button { text: "Consegna"; primary: true; clicked => { root.act("submit"); } }
+                        }
+                        CancelExam {
+                            confirming <=> root.confirm-cancel;
+                            cancel => { root.act("cancel"); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

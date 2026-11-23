@@ -1,5 +1,5 @@
 //! Selezione del listato in base alla categoria, senza mescolare banche dati.
-use anyhow::{Result, bail, ensure};
+use anyhow::{Result, ensure};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -17,6 +17,20 @@ pub struct Listato {
     pub pronto: bool,
     pub fonte: String,
     pub note: String,
+    pub exam: Option<VerifiedEdition>,
+}
+#[derive(Debug, Deserialize)]
+pub struct VerifiedEdition {
+    pub pdf_sha256: String,
+    pub row_count: usize,
+    pub digest: String,
+    pub version: String,
+    pub source: String,
+    pub valid_from: String,
+    pub valid_until: Option<String>,
+    pub question_count: u32,
+    pub max_errors: u32,
+    pub duration_seconds: u32,
 }
 pub fn load() -> Result<Catalog> {
     let manifest: Catalog = serde_json::from_str(include_str!("../data/listati.json"))?;
@@ -27,28 +41,55 @@ pub fn version_for(license: &str, procedure: &str) -> Result<String> {
     let catalog = load()?;
     let license = license.trim().to_ascii_uppercase();
     let procedure = procedure.trim().to_ascii_lowercase();
-    let matches: Vec<&Listato> = catalog.listati.iter()
+    let matches: Vec<&Listato> = catalog
+        .listati
+        .iter()
         .filter(|x| x.procedura == procedure && x.patenti.iter().any(|c| c == &license))
         .collect();
-    ensure!(!matches.is_empty(),
+    ensure!(
+        !matches.is_empty(),
         "Nessun listato registrato per patente {} e procedura {}. Esegui 'catalog'.",
-        license, procedure);
-    ensure!(matches.len() == 1, "Catalogo ambiguo per patente {} ({})", license, procedure);
+        license,
+        procedure
+    );
+    ensure!(
+        matches.len() == 1,
+        "Catalogo ambiguo per patente {} ({})",
+        license,
+        procedure
+    );
     let item = matches[0];
-    ensure!(item.pronto,
+    ensure!(
+        item.pronto,
         "Il listato {} non è abilitato: {}. Fonte: {}",
-        item.nome, item.note, item.fonte);
+        item.nome,
+        item.note,
+        item.fonte
+    );
     Ok(item.versione.clone())
 }
 pub fn print() -> Result<()> {
     let catalog = load()?;
-    println!("Fonte indice: {} (controllata: {})", catalog.source_index_url, catalog.checked_at);
+    println!(
+        "Fonte indice: {} (controllata: {})",
+        catalog.source_index_url, catalog.checked_at
+    );
     for item in catalog.listati {
-        println!("{} | {} | {} | {} | {}",
+        println!(
+            "{} | {} | {} | {} | {}",
             item.patenti.join(", "),
-            item.procedura, item.nome, item.versione,
-            if item.pronto { "selezionabile" } else { "in preparazione" });
-        if !item.pronto { println!("  Nota: {}", item.note); }
+            item.procedura,
+            item.nome,
+            item.versione,
+            if item.pronto {
+                "selezionabile"
+            } else {
+                "in preparazione"
+            }
+        );
+        if !item.pronto {
+            println!("  Nota: {}", item.note);
+        }
     }
     Ok(())
 }
@@ -63,13 +104,17 @@ mod tests {
     #[test]
     fn am_is_separate() {
         assert_eq!(version_for("AM", "conseguimento").unwrap(), "AM-MIT-2025");
-        assert_ne!(version_for("AM", "conseguimento").unwrap(),
-                   version_for("B", "conseguimento").unwrap());
+        assert_ne!(
+            version_for("AM", "conseguimento").unwrap(),
+            version_for("B", "conseguimento").unwrap()
+        );
     }
     #[test]
     fn revision_is_not_conseguimento() {
-        assert_ne!(version_for("B", "revisione").unwrap(),
-                   version_for("B", "conseguimento").unwrap());
+        assert_ne!(
+            version_for("B", "revisione").unwrap(),
+            version_for("B", "conseguimento").unwrap()
+        );
     }
     #[test]
     fn does_not_serve_unfiltered_superiori() {
