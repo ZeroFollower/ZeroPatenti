@@ -32,7 +32,7 @@ serde_json = "1"
 sha2 = "0.10"
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 tempfile = "3"
-sha1 = "0.10"
+sha1 = "0.11"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 tinyfiledialogs = { version = "3.9", default-features = false, optional = true }
